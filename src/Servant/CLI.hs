@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds             #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeApplications      #-}
@@ -24,12 +25,14 @@ import           Options.Applicative.Types
 import           Servant.API
 import           Servant.API.ContentTypes
 import           Servant.API.Modifiers
+import           Servant.API.ResponseHeaders
 import           Servant.Client
 import           Servant.Client.Core
 import           Servant.Docs
+import           Servant.Docs.Internal
 import           Text.Printf
 import           Type.Reflection
-import qualified Data.Text                 as T
+import qualified Data.Text                   as T
 
 class (HasDocs api, HasClient m api) => HasCLI m api where
     type CLI m api
@@ -105,17 +108,42 @@ instance ( KnownSymbol sym
         opt :: Parser Bool
         opt = switch ( long (symbolVal (Proxy @sym)) )
 
-instance ( cts' ~ (ct ': cts)
-         , RunClient m
-         , MimeUnrender ct a
-         , ReflectMethod method
-         , ToSample a
-         , AllMimeRender cts' a
-         , KnownNat status
-         ) => HasCLI m (Verb method status cts' a) where
-
+instance {-# OVERLAPPABLE #-}
+    -- Note [Non-Empty Content Types]
+    ( RunClient m, MimeUnrender ct a, ReflectMethod method, cts' ~ (ct ': cts)
+    , ToSample a
+    , AllMimeRender (ct ': cts) a
+    , KnownNat status
+    ) => HasCLI m (Verb method status cts' a) where
     type CLI m (Verb method status cts' a) = a
+    clientParser_ _ _ = pure
 
+instance {-# OVERLAPPING #-}
+    ( RunClient m, ReflectMethod method
+    , HasDocs (Verb method status cts NoContent)
+    ) => HasCLI m (Verb method status cts NoContent) where
+    type CLI m (Verb method status cts NoContent) = NoContent
+    clientParser_ _ _ = pure
+
+instance {-# OVERLAPPING #-}
+    -- Note [Non-Empty Content Types]
+    ( RunClient m, MimeUnrender ct a, BuildHeadersTo ls
+    , ReflectMethod method, cts' ~ (ct ': cts)
+    , ToSample a
+    , AllMimeRender (ct ': cts) a
+    , KnownNat status
+    , AllHeaderSamples ls
+    , GetHeaders (HList ls)
+    ) => HasCLI m (Verb method status cts' (Headers ls a)) where
+    type CLI m (Verb method status cts' (Headers ls a)) = Headers ls a
+    clientParser_ _ _ = pure
+
+instance {-# OVERLAPPING #-}
+    ( RunClient m, BuildHeadersTo ls, ReflectMethod method
+    , HasDocs (Verb method status cts (Headers ls NoContent))
+    ) => HasCLI m (Verb method status cts (Headers ls NoContent)) where
+    type CLI m (Verb method status cts (Headers ls NoContent))
+      = Headers ls NoContent
     clientParser_ _ _ = pure
 
 clientParser

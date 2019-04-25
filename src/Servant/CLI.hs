@@ -1,26 +1,21 @@
-{-# LANGUAGE AllowAmbiguousTypes   #-}
-{-# LANGUAGE DeriveFunctor         #-}
+{-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE TypeInType            #-}
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
 
 module Servant.CLI (
+    HasClient(..)
+  , clientParser
+  , parseClient
   ) where
 
-import           Control.Monad
 import           Data.Bifunctor
-import           Data.Functor.Foldable
-import           Data.Kind
-import           Data.Map                  (Map)
 import           Data.Proxy
-import           Data.Text                 (Text)
 import           GHC.TypeLits
 import           Options.Applicative
 import           Options.Applicative.Types
@@ -29,44 +24,6 @@ import           Servant.API.Modifiers
 import           Servant.Client
 import           Servant.Client.Core
 import qualified Data.Text                 as T
-
--- data Endpoint = Parser
-
--- data Opts = Branch (Parser (ClientM String))
---           | Command (Map String Opts)
-
--- data Opts = Opts (String -> Maybe Opts)
---           | DoIt (ClientM String)
-
-
--- class HasCLI api where
---     type CLI api
---     clientParser :: proxy api -> Parser (ClientM (CLI api))
-
--- instance HasCLI EmptyAPI where
---     type CLI EmptyAPI = EmptyClient
---     clientParser _ = pure . pure $ EmptyClient
-
--- instance (HasCLI a, HasCLI b) => HasCLI (a :<|> b) where
---     type CLI (a :<|> b) = Either (CLI a) (CLI b)
---     clientParser _ = (fmap Left  <$> clientParser (Proxy @a))
---                  <|> (fmap Right <$> clientParser (Proxy @b))
-
--- instance (KnownSymbol path, HasCLI api) => HasCLI (path :> api) where
---     type CLI (path :> api) = CLI api
---     clientParser _ = subparser $
---       command (symbolVal (Proxy @path))
---               (info (clientParser (Proxy @api) <**> helper) mempty)
-
--- instance (KnownSymbol capture, FromHttpApiData a, ToHttpApiData a, HasCLI api, HasClient ClientM api) => HasCLI (Capture' mods capture a :> api) where
---     type CLI (Capture' mods capture a :> api) = CLI api
---     clientParser _ = _ . client (Proxy @(Capture' mods capture a :> api)) <$> opt
---                                    -- (clientParser (Proxy @api))
---       where
---         opt = argument (eitherReader (first T.unpack . parseUrlPiece @a . T.pack))
---                 ( metavar "CAPTURE"
---                <> help (symbolVal (Proxy @capture))
---                 )
 
 class HasClient m api => HasCLI m api where
     type CLI m api
@@ -134,7 +91,7 @@ instance ( cts' ~ (ct ': cts)
 
     type CLI m (Verb method status cts' a) = a
 
-    clientParser_ pm _ = pure
+    clientParser_ _ _ = pure
 
 clientParser
     :: HasCLI m api

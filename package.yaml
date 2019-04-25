@@ -30,6 +30,7 @@ dependencies:
 - text
 - optparse-applicative
 - servant
+- servant-docs
 - servant-client
 - servant-client-core
 

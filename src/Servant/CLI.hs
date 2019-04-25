@@ -17,11 +17,14 @@ module Servant.CLI (
   , parseClient
   , ParseBody(..)
   , defaultParseBody
+  -- * Re-export
+  , ToSample(..)
+  , ToCapture(..), DocCapture(..)
+  , ToParam(..), DocQueryParam(..)
   ) where
 
 import           Data.Bifunctor
 import           Data.Char
-import           Data.Coerce
 import           Data.Proxy
 import           GHC.TypeLits
 import           Options.Applicative
@@ -29,15 +32,14 @@ import           Options.Applicative.Types
 import           Servant.API
 import           Servant.API.ContentTypes
 import           Servant.API.Modifiers
-import           Servant.API.ResponseHeaders
 import           Servant.Client
 import           Servant.Client.Core
 import           Servant.Docs
 import           Servant.Docs.Internal
 import           Text.Printf
 import           Type.Reflection
-import qualified Data.Text                   as T
-import qualified Data.Text.Lazy              as TL
+import qualified Data.Text                 as T
+import qualified Data.Text.Lazy            as TL
 
 class (HasDocs api, HasClient m api) => HasCLI m api where
     type CLI m api
@@ -136,6 +138,7 @@ instance ( MimeRender ct a
     clientParser_ pm _ api =
         BindP parseBody $
           clientParser_ pm (Proxy @api) . api
+    -- TODO: use tosample to provide samples?
 
 -- TODO: we have a problem here, how to distinguish DELETE and POST
 -- requests with the same name.

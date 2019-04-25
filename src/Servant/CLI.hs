@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE DefaultSignatures     #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -14,10 +15,13 @@ module Servant.CLI (
     HasClient(..)
   , clientParser
   , parseClient
+  , ParseBody(..)
+  , defaultParseBody
   ) where
 
 import           Data.Bifunctor
 import           Data.Char
+import           Data.Coerce
 import           Data.Proxy
 import           GHC.TypeLits
 import           Options.Applicative
@@ -33,11 +37,16 @@ import           Servant.Docs.Internal
 import           Text.Printf
 import           Type.Reflection
 import qualified Data.Text                   as T
+import qualified Data.Text.Lazy              as TL
 
 class (HasDocs api, HasClient m api) => HasCLI m api where
     type CLI m api
 
-    clientParser_ :: Proxy m -> Proxy api -> Client m api -> Parser (m (CLI m api))
+    clientParser_
+        :: Proxy m
+        -> Proxy api
+        -> Client m api
+        -> Parser (m (CLI m api))
 
 instance HasClient m EmptyAPI => HasCLI m EmptyAPI where
     type CLI m EmptyAPI = EmptyClient
@@ -51,8 +60,10 @@ instance (HasCLI m a, HasCLI m b) => HasCLI m (a :<|> b) where
 instance (KnownSymbol path, HasCLI m api) => HasCLI m (path :> api) where
     type CLI m (path :> api) = CLI m api
     clientParser_ pm _ api = subparser $
-      command (symbolVal (Proxy @path))
-              (info (clientParser_ pm (Proxy @api) api <**> helper) mempty)
+         command pathstr ( info (clientParser_ pm (Proxy @api) api <**> helper) mempty)
+      <> metavar pathstr
+      where
+        pathstr = symbolVal (Proxy @path)
 
 instance ( KnownSymbol sym
          , FromHttpApiData a
@@ -66,8 +77,8 @@ instance ( KnownSymbol sym
       where
         arg :: Parser a
         arg = argument (eitherReader (first T.unpack . parseUrlPiece @a . T.pack))
-                ( metavar (map toUpper capType)
-               <> help (printf "%s: %s (%s)" _capSymbol _capDesc capType)
+                ( metavar (map toUpper _capSymbol)
+               <> help (printf "%s (%s)" _capDesc capType)
                 )
         capType = show $ typeRep @a
         DocCapture{..} = toCapture (Proxy @(Capture sym a))
@@ -87,7 +98,7 @@ instance ( KnownSymbol sym
         opt = option (eitherReader (first T.unpack . parseUrlPiece @a . T.pack))
                 ( metavar (map toUpper pType)
                <> long pName
-               <> help (printf "%s: %s (%s)" _paramName _paramDesc pType)
+               <> help (printf "%s (%s)" _paramDesc pType)
                 )
         opt' :: Parser (If (FoldRequired' 'False mods) a (Maybe a))
         opt' = case sbool @(FoldRequired' 'False mods) of
@@ -97,6 +108,7 @@ instance ( KnownSymbol sym
         pName = symbolVal (Proxy @sym)
         DocQueryParam{..} = toParam (Proxy @(QueryParam' mods sym a))
         -- TODO: experiment with more detailed help doc
+        -- also, we can offer completion with values
 
 instance ( KnownSymbol sym
          , ToParam (QueryFlag sym)
@@ -108,6 +120,25 @@ instance ( KnownSymbol sym
         opt :: Parser Bool
         opt = switch ( long (symbolVal (Proxy @sym)) )
 
+class ParseBody a where
+    parseBody :: Parser a
+
+    default parseBody :: (Typeable a, Read a) => Parser a
+    parseBody = defaultParseBody auto
+
+instance ( MimeRender ct a
+         , ParseBody a
+         , ToSample a
+         , AllMimeRender (ct ': cts) a
+         , HasCLI m api
+         ) => HasCLI m (ReqBody' mods (ct ': cts) a :> api) where
+    type CLI m (ReqBody' mods (ct ': cts) a :> api) = CLI m api
+    clientParser_ pm _ api =
+        BindP parseBody $
+          clientParser_ pm (Proxy @api) . api
+
+-- TODO: we have a problem here, how to distinguish DELETE and POST
+-- requests with the same name.
 instance {-# OVERLAPPABLE #-}
     -- Note [Non-Empty Content Types]
     ( RunClient m, MimeUnrender ct a, ReflectMethod method, cts' ~ (ct ': cts)
@@ -159,3 +190,29 @@ parseClient
     -> IO (ClientM (CLI ClientM api))
 parseClient p = execParser $ info (clientParser p (Proxy @ClientM) <**> helper) mempty
 
+
+
+
+defaultParseBody :: forall a. Typeable a => ReadM a -> Parser a
+defaultParseBody r = option r
+    ( metavar (map toUpper tp)
+   <> long "data"
+   <> short 'd'
+   <> help (printf "Request body (%s)" tp)
+    )
+  where
+    tp = show (typeRep @a)
+
+instance ParseBody String where
+    parseBody = defaultParseBody str
+
+instance ParseBody T.Text where
+    parseBody = defaultParseBody str
+
+instance ParseBody TL.Text where
+    parseBody = defaultParseBody str
+
+instance ParseBody Int where
+instance ParseBody Integer where
+instance ParseBody Float where
+instance ParseBody Double where

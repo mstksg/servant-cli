@@ -24,6 +24,9 @@ import           Servant.Docs
 newtype Greet = Greet Text
   deriving (Generic, Show)
 
+instance ParseBody Greet where
+    parseBody = Greet <$> parseBody
+
 -- | We can get JSON support automatically. This will be used to parse
 -- and encode a Greeting as 'JSON'.
 instance FromJSON Greet

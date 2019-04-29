@@ -1,5 +1,6 @@
 {-# LANGUAGE DefaultSignatures     #-}
 {-# LANGUAGE DeriveFunctor         #-}
+{-# LANGUAGE DeriveTraversable     #-}
 {-# LANGUAGE EmptyCase             #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
@@ -10,6 +11,7 @@
 {-# LANGUAGE PolyKinds             #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeInType            #-}
@@ -37,6 +39,8 @@ import           Control.Monad.Free
 import           Data.Bifunctor
 import           Data.Char
 import           Data.Functor.Coyoneda
+import           Data.Functor.Foldable.TH
+import           Data.Functor.Foldable
 import           Data.Kind
 import           Data.Proxy
 import           Data.Singletons
@@ -58,6 +62,7 @@ import           Text.Printf
 import           Type.Reflection
 import qualified Control.Alternative.Free           as Alt
 import qualified Control.Monad.Free                 as FM
+import qualified Data.Map                           as M
 import qualified Data.Text                          as T
 import qualified Data.Text.Lazy                     as TL
 
@@ -90,44 +95,145 @@ data Opt a = Opt
 
 -- type Opt = Ap OptF
 
--- | Path components are interpreted as subcommands
-data Com a = Com
-    { comName :: String
-    , comDesc :: String
-    }
-  deriving Functor
+-- -- | Path components are interpreted as subcommands
+-- data Com a = Com
+--     { comName :: String
+--     , comDesc :: String
+--     }
+--   deriving Functor
 
 -- newtype PStruct a = PStruct (([] :.: (Ap Opt :*: Com)) a)
 
-type PStruct = Free ([] :.: (Ap Opt :*: Com))
+-- data PStructF :: Type -> Type where
+--     PSF :: { psOpts :: Ap Opt x
+--            , psComs :: [x -> Com a]
+--            }
+--          -> PStructF a
+
+-- type PStruct = Free PStructF
+
+-- structParser :: PStruct a -> Parser a
+-- structParser = \case
+--     Free (PSF{..}) -> 
+
+-- TODO: hm, we have some issues here.  what about situations where the
+-- query params come before the command?  i guess it is important at least
+-- to re-order the query params to be all at the end, since that's how it's
+-- like.
+--
+-- But in the "help" we'd want query params to show up as they are needed.
+-- so that's what the Free ([] :.: Ap Opt :*: Com) gives us.
+--
+-- However the problem with Free ([] :.: Apt Opt) is that we can't get any
+-- options at the top level.
+--
+-- I think, to mimic actual REST usage, we need to have all query params at
+-- the final level.  That's where they belong.  The thing that has to get
+-- added per-level are captures.
+--
+-- So it looks like we have to "distribute" all of the query params to the
+-- end of the trees.
+
+-- -- | Path components are interpreted as subcommands
+-- data Com a = Com
+--     { comName :: String
+--     , comDesc :: String
+--     }
+--   deriving Functor
+
+data PStruct :: Type -> Type where
+    PBranch   :: M.Map String (PStruct a)
+              -> PStruct a
+    PEndpoint :: Ap Opt a -> PStruct a
+  deriving Functor
+
+makeBaseFunctor ''PStruct
 
 structParser :: PStruct a -> Parser a
-structParser = \case
-    Free (Comp1 coms) -> subparser . foldMap mkCmd $ coms
-    FM.Pure x         -> pure x
+structParser = cata go
   where
-    mkCmd :: (Ap Opt :*: Com) (PStruct a) -> Mod CommandFields a
-    mkCmd (os :*: Com{..}) = command comName $
-        info (BindP (runAp mkOpt os <**> helper) structParser) (progDesc comDesc)
+    go :: PStructF a (Parser a) -> Parser a
+    go = \case
+      PBranchF cs   -> subparser . M.foldMapWithKey mkCmd $ cs
+      PEndpointF os -> runAp mkOpt os
+    mkCmd :: String -> Parser x -> Mod CommandFields x
+    mkCmd c p = command c $ info (p <**> helper) mempty
     mkOpt :: Opt x -> Parser x
-    mkOpt Opt{..} = option optRead
-        ( long optName
+    mkOpt Opt{..} = option optRead $
+          long optName
        <> help optDesc
        <> metavar optMeta
-        )
 
 testParser :: PStruct (Either Int (Either Bool String))
-testParser = Free . Comp1 $
-    [ fmap Left <$> liftAp (Opt "o1" "opt 1" "INT" (pure <$> auto @Int)) :*: Com "foo" "an int"
-    , fmap Right <$> pure innerTest :*: Com "bar" "something"
+testParser = PBranch . M.fromList $
+    [ ("foo", fmap Left  . PEndpoint . liftAp $ Opt "o1" "opt 1" "INT" (auto @Int))
+    , ("bar", fmap Right . PBranch . M.fromList $
+        [ ("path1", fmap Left  . PEndpoint . liftAp $ Opt "o2" "opt 2" "BOOL" (auto @Bool))
+        , ("path2", Right <$> PEndpoint (pure "ok"))
+
+        ]
+      )
     ]
-  where
-    innerTest :: PStruct (Either Bool String)
-    innerTest = liftF . Comp1 $
-      [ Left <$> liftAp (Opt "o2" "opt 2" "BOOL" auto) :*: Com "path1" "path 1"
-      -- , Right <$> liftAp (Opt "o3" "opt 3" "STRING" str) :*: Com "path2" "path 2"
-      , Right <$> pure "ok" :*: Com "path2" "path 2"
-      ]
+        -- Free . Comp1 $
+    -- [ fmap Left <$> liftAp (Opt "o1" "opt 1" "INT" (pure <$> auto @Int)) :*: Com "foo" "an int"
+    -- , fmap Right <$> pure innerTest :*: Com "bar" "something"
+    -- ]
+  -- where
+    -- innerTest :: PStruct (Either Bool String)
+    -- innerTest = liftF . Comp1 $
+      -- [ Left <$> liftAp (Opt "o2" "opt 2" "BOOL" auto) :*: Com "path1" "path 1"
+      -- -- , Right <$> liftAp (Opt "o3" "opt 3" "STRING" str) :*: Com "path2" "path 2"
+      -- , Right <$> pure "ok" :*: Com "path2" "path 2"
+      -- ]
+
+
+-- structParser :: PStruct a -> Parser a
+-- structParser = \case
+--     PBranch m -> foldMap
+-- structParser = \case
+--     Free (Comp1 coms) -> subparser . foldMap mkCmd $ coms
+--     FM.Pure x         -> pure x
+--   where
+--     mkCmd :: (Ap Opt :*: Com) (PStruct a) -> Mod CommandFields a
+--     mkCmd (os :*: Com{..}) = command comName $
+--         info (BindP (runAp mkOpt os <**> helper) structParser) (progDesc comDesc)
+--     mkOpt :: Opt x -> Parser x
+--     mkOpt Opt{..} = option optRead
+--         ( long optName
+--        <> help optDesc
+--        <> metavar optMeta
+--         )
+
+
+-- type PStruct = Free ([] :.: (Ap Opt :*: Com))
+
+-- structParser :: PStruct a -> Parser a
+-- structParser = \case
+--     Free (Comp1 coms) -> subparser . foldMap mkCmd $ coms
+--     FM.Pure x         -> pure x
+--   where
+--     mkCmd :: (Ap Opt :*: Com) (PStruct a) -> Mod CommandFields a
+--     mkCmd (os :*: Com{..}) = command comName $
+--         info (BindP (runAp mkOpt os <**> helper) structParser) (progDesc comDesc)
+--     mkOpt :: Opt x -> Parser x
+--     mkOpt Opt{..} = option optRead
+--         ( long optName
+--        <> help optDesc
+--        <> metavar optMeta
+--         )
+
+-- testParser :: PStruct (Either Int (Either Bool String))
+-- testParser = Free . Comp1 $
+--     [ fmap Left <$> liftAp (Opt "o1" "opt 1" "INT" (pure <$> auto @Int)) :*: Com "foo" "an int"
+--     , fmap Right <$> pure innerTest :*: Com "bar" "something"
+--     ]
+--   where
+--     innerTest :: PStruct (Either Bool String)
+--     innerTest = liftF . Comp1 $
+--       [ Left <$> liftAp (Opt "o2" "opt 2" "BOOL" auto) :*: Com "path1" "path 1"
+--       -- , Right <$> liftAp (Opt "o3" "opt 3" "STRING" str) :*: Com "path2" "path 2"
+--       , Right <$> pure "ok" :*: Com "path2" "path 2"
+--       ]
 
 -- testParser = liftF . Comp1 $
 --     [ Left  <$> (liftAp (Opt "o1" "opt 1" "INT"  auto) :*: Com "foo" "an int")

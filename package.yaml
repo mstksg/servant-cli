@@ -37,6 +37,8 @@ dependencies:
 - singletons
 - kan-extensions
 - free
+- containers
+- recursion-schemes
 - vinyl
 # - servant-server
 

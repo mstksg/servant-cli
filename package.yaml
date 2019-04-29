@@ -33,6 +33,12 @@ dependencies:
 - servant-docs
 - servant-client
 - servant-client-core
+- decidable
+- singletons
+- kan-extensions
+- free
+- vinyl
+# - servant-server
 
 library:
   source-dirs: src

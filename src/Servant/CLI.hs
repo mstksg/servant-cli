@@ -108,9 +108,8 @@ data Arg a = Arg
 data MultiArg :: Type -> Type where
     MultiArg :: Arg a -> MultiArg [a]
 
--- type CaptureInput = Arg :+: MultiArg
-
-type Captures = Day Arg PStruct :+: Day MultiArg Endpoint
+type Captures = Day Arg      PStruct
+            :+: Day MultiArg (Map HTTP.Method :.: Endpoint)
 
 -- | Endpoint arguments and body.
 data Endpoint a = Endpoint
@@ -119,12 +118,11 @@ data Endpoint a = Endpoint
 
 -- | Structure for a parser of a given value that may use items from
 -- captures and arguments.
-data PStruct :: Type -> Type where
-    PBranch   :: Map String (PStruct a)       -- ^ more components
-              -> Maybe (Captures a)           -- ^ capture
-              -- -> Maybe (Day Arg CaptureRes a)    -- ^ capture
-              -> Map HTTP.Method (Endpoint a) -- ^ endpoints
-              -> PStruct a
+data PStruct a = PStruct
+    { psComponent :: Map String (PStruct a)
+    , psCaptures  :: Maybe (Captures a)
+    , psEndpoints :: Map HTTP.Method (Endpoint a)
+    }
   deriving Functor
 
 makeBaseFunctor ''PStruct
@@ -134,33 +132,29 @@ f |+| g = \case
     L1 x -> f x
     R1 y -> g y
 
+mapInnerComp :: Functor f => (g a -> g b) -> (f :.: g) a -> (f :.: g) b
+mapInnerComp f (Comp1 x) = Comp1 (fmap f x)
+
 structParser :: PStruct a -> Parser a
 structParser = cata go
   where
-    go :: forall x. PStructF x (Parser x) -> Parser x
-    go = \case
-      PBranchF cs c eps ->
-        let (Any anySubs, subs) = M.foldMapWithKey mkCmd $ cs
-            subp
-              | anySubs   = subparser subs
-              | otherwise = empty
-            cap  = maybe empty (mkArg |+| mkArgs) c
-            epMap = mkEndpoint <$> eps
-            ep = case M.minView epMap of
-              Nothing -> empty
-              Just (m0, ms)
-                | M.null ms -> m0
-                | otherwise -> subparser $ M.foldMapWithKey pickMethod epMap
-        in  subp <|> cap <|> ep
+    go :: PStructF x (Parser x) -> Parser x
+    go (PStructF cs c eps) = subp <|> cap <|> ep
+      where
+        (Any anySubs, subs) = M.foldMapWithKey mkCmd $ cs
+        subp
+          | anySubs   = subparser subs
+          | otherwise = empty
+        cap   = maybe empty (mkArg |+| mkArgs) c
+        ep    = methodPicker eps
     mkCmd :: String -> Parser x -> (Any, Mod CommandFields x)
     mkCmd c p = (Any True, command c $ info (p <**> helper) mempty)
-    -- mkArgs :: Day Arg CaptureRes x -> Parser x
-    -- mkArgs (Day a (L1 p)         f) = f <$> argParser a        <*> structParser p
-    -- mkArgs (Day a (R1 (Comp1 p)) f) = _ <$> argParser a <*> mkEndpoint p
     mkArg :: Day Arg PStruct x -> Parser x
     mkArg (Day a p f) = f <$> argParser a <*> structParser p
-    mkArgs :: Day MultiArg Endpoint x -> Parser x
-    mkArgs (Day (MultiArg a) p f) = f <$> many (argParser a) <*> mkEndpoint p
+    mkArgs :: Day MultiArg (Map HTTP.Method :.: Endpoint) x -> Parser x
+    mkArgs (Day (MultiArg a) (Comp1 ps) f) =
+            flip f <$> methodPicker ps
+                   <*> many (argParser a)
     argParser :: Arg x -> Parser x
     argParser Arg{..} = argument argRead $ help argDesc
                                         <> metavar argMeta
@@ -177,11 +171,29 @@ structParser = cata go
         mods = long optName
             <> help optDesc
             <> metavar optMeta
+    methodPicker :: Map HTTP.Method (Endpoint x) -> Parser x
+    methodPicker eps = case M.minView epMap of
+        Nothing       -> empty
+        Just (m0, ms)
+          | M.null ms -> m0
+          | otherwise -> subparser $ M.foldMapWithKey pickMethod epMap
+      where
+        epMap = mkEndpoint <$> eps
     pickMethod :: BS.ByteString -> Parser x -> Mod CommandFields x
     pickMethod m p = command (T.unpack . T.decodeUtf8 $ m) $ info (p <**> helper) mempty
 
+-- -- | Structure for a parser of a given value that may use items from
+-- -- captures and arguments.
+-- data PStruct :: Type -> Type where
+--     PStruct   :: Map String (PStruct a)       -- ^ more components
+--               -> Maybe (Captures a)           -- ^ capture
+--               -> Map HTTP.Method (Endpoint a) -- ^ endpoints
+--               -> PStruct a
+--   deriving Functor
+
+
 altPStruct :: PStruct a -> PStruct a -> PStruct a
-altPStruct (PBranch cs1 c1 ep1) (PBranch cs2 c2 ep2) = PBranch cs3 c3 ep3
+altPStruct (PStruct cs1 c1 ep1) (PStruct cs2 c2 ep2) = PStruct cs3 c3 ep3
   where
     cs3 = case c1 of
       Just _  -> cs1
@@ -193,7 +205,7 @@ instance Semigroup (PStruct a) where
     (<>) = altPStruct
 
 instance Monoid (PStruct a) where
-    mempty = PBranch M.empty Nothing M.empty
+    mempty = PStruct M.empty Nothing M.empty
 
 branch :: PStruct a -> PStruct b -> PStruct (Either a b)
 branch x y = (Left <$> x) `altPStruct` (Right <$> y)
@@ -201,18 +213,20 @@ branch x y = (Left <$> x) `altPStruct` (Right <$> y)
 infixr 3 `branch`
 
 ($:>) :: String -> PStruct a -> PStruct a
-c $:> p = PBranch (M.singleton c p) Nothing M.empty
+c $:> p = PStruct (M.singleton c p) Nothing M.empty
 infixr 4 $:>
 
 (?:>) :: Opt a -> PStruct (a -> b) -> PStruct b
-o ?:> PBranch cs c ep = PBranch cs' c' ep'
+o ?:> PStruct cs c ep = PStruct cs' c' ep'
   where
     cs' = (o ?:>) <$> cs
     c'  = c <&> \case
-        L1 (Day a p f) -> let f' x y z = f z x y
-                          in  L1 $ Day a (o            ?:> (f' <$> p)) (&)
-        R1 (Day a p f) -> let f' x y z = f z x y
-                          in  R1 $ Day a (addEndpointOpt o (f' <$> p)) (&)
+        L1 (Day a p f) ->
+          let f' x y z = f z x y
+          in  L1 $ Day a (o ?:> (f' <$> p)) (&)
+        R1 (Day a p f) ->
+          let f' x y z = f z x y
+          in  R1 $ Day a (addEndpointOpt o `mapInnerComp` (f' <$> p)) (&)
     ep' = addEndpointOpt o <$> ep
 infixr 4 ?:>
 
@@ -221,24 +235,28 @@ addEndpointOpt o (Endpoint (Day eo eb ef)) =
     Endpoint (Day ((,) <$> liftAp o <*> eo) eb $ \(x, y) z -> ef y z x)
 
 (#:>) :: Arg a -> PStruct (a -> b) -> PStruct b
-a #:> p = PBranch M.empty (Just (L1 (Day a p (&)))) M.empty
+a #:> p = PStruct M.empty (Just (L1 (Day a p (&)))) M.empty
 infixr 4 #:>
 
-(##:>) :: Arg a -> Endpoint ([a] -> b) -> PStruct b
-a ##:> p = PBranch M.empty (Just (R1 (Day (MultiArg a) p (&)))) M.empty
+(##:>) :: Arg a -> PStruct ([a] -> b) -> PStruct b
+a ##:> p = PStruct M.empty
+                   (Just (R1 (Day (MultiArg a) (Comp1 (psEndpoints p)) (&))))
+                   M.empty
 infixr 4 ##:>
 
 -- | Add a request body.  NOTE!!!!! UNDEFINED BEHAVIOR IF DONE MORE THAN
 -- ONCE?
 (%:>) :: Parser a -> PStruct (a -> b) -> PStruct b
-b %:> PBranch cs c ep = PBranch cs' c' ep'
+b %:> PStruct cs c ep = PStruct cs' c' ep'
   where
     cs' = (b %:>) <$> cs
     c'  = c <&> \case
-        L1 (Day a p f) -> let f' x y z = f z x y
-                          in  L1 $ Day a (b             %:> (f' <$> p)) (&)
-        R1 (Day a p f) -> let f' x y z = f z x y
-                          in  R1 $ Day a (addEndpointBody b (f' <$> p)) (&)
+        L1 (Day a p f) ->
+          let f' x y z = f z x y
+          in  L1 $ Day a (b             %:> (f' <$> p)) (&)
+        R1 (Day a p f) ->
+          let f' x y z = f z x y
+          in  R1 $ Day a (addEndpointBody b `mapInnerComp` (f' <$> p)) (&)
     ep' = addEndpointBody b <$> ep
 infixr 4 %:>
 
@@ -248,7 +266,7 @@ addEndpointBody b (Endpoint (Day eo eb ef)) =
 
 
 endpoint :: HTTP.Method -> a -> PStruct a
-endpoint m = PBranch M.empty Nothing . M.singleton m . Endpoint . pure
+endpoint m = PStruct M.empty Nothing . M.singleton m . Endpoint . pure
 
 orRequired :: ReadM a -> Coyoneda OptRead a
 orRequired = liftCoyoneda . ORRequired
@@ -272,16 +290,16 @@ defaultParseBody r = option r
 testStruct :: PStruct (Either (Bool, String) String)
 testStruct = hello `branch` (greetDelete <> greetPost)
   where
-    hello = "hello"
-        $:> Arg "name" "<name>" (str @String)
-        #:> Opt "capital" "capital" "BOOL" orSwitch
-        ?:> endpoint HTTP.methodGet (,)
-    greetPost = "greet"
-            $:> defaultParseBody (str @String)
-            %:> endpoint HTTP.methodPost (map toUpper)
+    hello       = "hello"
+              $:> Arg "name" "<name>" (str @String)
+              #:> Opt "capital" "capital" "BOOL" orSwitch
+              ?:> endpoint HTTP.methodGet (,)
+    greetPost   = "greet"
+              $:> defaultParseBody (str @String)
+              %:> endpoint HTTP.methodPost (map toUpper)
     greetDelete = "greet"
-            $:> Arg "greetid" "<greetid>" (str @String)
-            #:> endpoint HTTP.methodDelete (map toLower)
+              $:> Arg "greetid" "<greetid>" (str @String)
+              #:> endpoint HTTP.methodDelete (map toLower)
 
 -- class (HasDocs api, HasClient m api) => HasCLI m api where
 --     type CLI m api

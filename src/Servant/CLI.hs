@@ -82,14 +82,6 @@ import qualified Data.Text.Encoding                        as T
 import qualified Data.Text.Lazy                            as TL
 import qualified Network.HTTP.Types                        as HTTP
 
--- | Captures are interpreted as arguments
-data Arg a = Arg
-    { argDesc :: String
-    , argMeta :: String
-    , argRead :: ReadM a
-    }
-  deriving Functor
-
 -- | How to "read" an option.
 data OptRead :: Type -> Type where
     ORRequired :: ReadM a -> OptRead a
@@ -105,35 +97,42 @@ data Opt a = Opt
     }
   deriving Functor
 
+-- | Captures are interpreted as arguments
+data Arg a = Arg
+    { argDesc :: String
+    , argMeta :: String
+    , argRead :: ReadM a
+    }
+  deriving Functor
+
+data MultiArg :: Type -> Type where
+    MultiArg :: Arg a -> MultiArg [a]
+
+-- type CaptureInput = Arg :+: MultiArg
+
+type Captures = Day Arg PStruct :+: Day MultiArg Endpoint
+
 -- | Endpoint arguments and body.
-data Endpoint :: Type -> Type where
-    Endpoint :: { epOpts :: Ap Opt x
-                , epBody :: Parser y
-                , epOut  :: (x -> y -> a)
-                }
-             -> Endpoint a
+data Endpoint a = Endpoint
+    { epStruct :: Day (Ap Opt) Parser a }
+  deriving Functor
 
-deriving instance Functor Endpoint
-instance Applicative Endpoint where
-    pure x = Endpoint (pure ()) (pure ()) $ \_ _ -> x
-    liftA2 f (Endpoint o1 b1 f1) (Endpoint o2 b2 f2)
-        = Endpoint (liftA2 (,) o1 o2) (liftA2 (,) b1 b2) $ \(x1, x2) (y1, y2) ->
-            f (f1 x1 y1) (f2 x2 y2)
-
--- deriving via (Day (Ap Opt) Parser) instance Applicative Endpoint
-
-        -- a = Endpoint
-    -- { epOpts :: Ap Opt a
-    -- }
-
+-- | Structure for a parser of a given value that may use items from
+-- captures and arguments.
 data PStruct :: Type -> Type where
     PBranch   :: Map String (PStruct a)       -- ^ more components
-              -> Maybe (Day Arg PStruct a)    -- ^ capture
+              -> Maybe (Captures a)           -- ^ capture
+              -- -> Maybe (Day Arg CaptureRes a)    -- ^ capture
               -> Map HTTP.Method (Endpoint a) -- ^ endpoints
               -> PStruct a
   deriving Functor
 
 makeBaseFunctor ''PStruct
+
+(|+|) :: (f a -> r) -> (g a -> r) -> (f :+: g) a -> r
+f |+| g = \case
+    L1 x -> f x
+    R1 y -> g y
 
 structParser :: PStruct a -> Parser a
 structParser = cata go
@@ -145,9 +144,8 @@ structParser = cata go
             subp
               | anySubs   = subparser subs
               | otherwise = empty
-            cap  = maybe empty mkArg c
+            cap  = maybe empty (mkArg |+| mkArgs) c
             epMap = mkEndpoint <$> eps
-            -- ep = traceShow (M.keys epMap) $ case M.minView epMap of
             ep = case M.minView epMap of
               Nothing -> empty
               Just (m0, ms)
@@ -156,16 +154,19 @@ structParser = cata go
         in  subp <|> cap <|> ep
     mkCmd :: String -> Parser x -> (Any, Mod CommandFields x)
     mkCmd c p = (Any True, command c $ info (p <**> helper) mempty)
+    -- mkArgs :: Day Arg CaptureRes x -> Parser x
+    -- mkArgs (Day a (L1 p)         f) = f <$> argParser a        <*> structParser p
+    -- mkArgs (Day a (R1 (Comp1 p)) f) = _ <$> argParser a <*> mkEndpoint p
     mkArg :: Day Arg PStruct x -> Parser x
-    mkArg (Day Arg{..} p f) = f <$> argument argRead mods
-                                <*> structParser p
-      where
-        mods = help argDesc
-            <> metavar argMeta
+    mkArg (Day a p f) = f <$> argParser a <*> structParser p
+    mkArgs :: Day MultiArg Endpoint x -> Parser x
+    mkArgs (Day (MultiArg a) p f) = f <$> many (argParser a) <*> mkEndpoint p
+    argParser :: Arg x -> Parser x
+    argParser Arg{..} = argument argRead $ help argDesc
+                                        <> metavar argMeta
     mkEndpoint :: Endpoint x -> Parser x
-    mkEndpoint Endpoint{..} = epOut
-        <$> runAp mkOpt epOpts
-        <*> epBody
+    mkEndpoint (Endpoint (Day o b f)) = f <$> runAp mkOpt o
+                                          <*> b
     mkOpt :: Opt x -> Parser x
     mkOpt Opt{..} = lowerCoyoneda $ (`hoistCoyoneda` optRead) $ \case
         ORRequired r -> option r mods
@@ -203,22 +204,29 @@ infixr 3 `branch`
 c $:> p = PBranch (M.singleton c p) Nothing M.empty
 infixr 4 $:>
 
-(?:>) :: forall a b. Opt a -> PStruct (a -> b) -> PStruct b
+(?:>) :: Opt a -> PStruct (a -> b) -> PStruct b
 o ?:> PBranch cs c ep = PBranch cs' c' ep'
   where
     cs' = (o ?:>) <$> cs
     c'  = c <&> \case
-        Day a p f -> let f' x y z = f z x y
-                     in  Day a (o ?:> (f' <$> p)) (&)
-    ep' = ep <&> \case
-        Endpoint eo eb ef ->
-          Endpoint ((,) <$> liftAp o <*> eo) eb $ \(x, y) z -> ef y z x
+        L1 (Day a p f) -> let f' x y z = f z x y
+                          in  L1 $ Day a (o            ?:> (f' <$> p)) (&)
+        R1 (Day a p f) -> let f' x y z = f z x y
+                          in  R1 $ Day a (addEndpointOpt o (f' <$> p)) (&)
+    ep' = addEndpointOpt o <$> ep
 infixr 4 ?:>
 
+addEndpointOpt :: Opt a -> Endpoint (a -> b) -> Endpoint b
+addEndpointOpt o (Endpoint (Day eo eb ef)) =
+    Endpoint (Day ((,) <$> liftAp o <*> eo) eb $ \(x, y) z -> ef y z x)
 
 (#:>) :: Arg a -> PStruct (a -> b) -> PStruct b
-a #:> p = PBranch M.empty (Just (Day a p (&))) M.empty
+a #:> p = PBranch M.empty (Just (L1 (Day a p (&)))) M.empty
 infixr 4 #:>
+
+(##:>) :: Arg a -> Endpoint ([a] -> b) -> PStruct b
+a ##:> p = PBranch M.empty (Just (R1 (Day (MultiArg a) p (&)))) M.empty
+infixr 4 ##:>
 
 -- | Add a request body.  NOTE!!!!! UNDEFINED BEHAVIOR IF DONE MORE THAN
 -- ONCE?
@@ -227,15 +235,20 @@ b %:> PBranch cs c ep = PBranch cs' c' ep'
   where
     cs' = (b %:>) <$> cs
     c'  = c <&> \case
-        Day a p f -> let f' x y z = f z x y
-                     in  Day a (b %:> (f' <$> p)) (&)
-    ep' = ep <&> \case
-        Endpoint eo eb ef ->
-          Endpoint eo (liftA2 (,) b eb) $ \x (y, z) -> ef x z y
+        L1 (Day a p f) -> let f' x y z = f z x y
+                          in  L1 $ Day a (b             %:> (f' <$> p)) (&)
+        R1 (Day a p f) -> let f' x y z = f z x y
+                          in  R1 $ Day a (addEndpointBody b (f' <$> p)) (&)
+    ep' = addEndpointBody b <$> ep
 infixr 4 %:>
 
+addEndpointBody :: Parser a -> Endpoint (a -> b) -> Endpoint b
+addEndpointBody b (Endpoint (Day eo eb ef)) =
+    Endpoint (Day eo (liftA2 (,) b eb) $ \x (y, z) -> ef x z y)
+
+
 endpoint :: HTTP.Method -> a -> PStruct a
-endpoint m = PBranch M.empty Nothing . M.singleton m . pure
+endpoint m = PBranch M.empty Nothing . M.singleton m . Endpoint . pure
 
 orRequired :: ReadM a -> Coyoneda OptRead a
 orRequired = liftCoyoneda . ORRequired
@@ -269,196 +282,6 @@ testStruct = hello `branch` (greetDelete <> greetPost)
     greetDelete = "greet"
             $:> Arg "greetid" "<greetid>" (str @String)
             #:> endpoint HTTP.methodDelete (map toLower)
-
--- data Arg a = Arg
---     { argDesc :: String
---     , argMeta :: String
---     , argRead :: ReadM a
---     }
---   deriving Functor
-
-
--- -- | Query parameters are interpreted as Opt
--- data Opt a = Opt
---     { optName :: String
---     , optDesc :: String
---     , optMeta :: String
---     , optRead :: Coyoneda OptRead a
---     }
---   deriving Functor
-
-
--- -- API specification
--- type TestApi =
---        -- GET /hello/:name?capital={true, false}  returns a Greet as JSON or PlainText
---        "hello" :> Capture "name" Text :> QueryParam "capital" Bool :> Get '[JSON, PlainText] Greet
-
---        -- POST /greet with a Greet as JSON in the request body,
---        --             returns a Greet as JSON
---   :<|> "greet" :> ReqBody '[JSON] Greet :> Post '[JSON] (Headers '[Header "X-Example" Int] Greet)
-
---        -- DELETE /greet/:greetid
---   :<|> "greet" :> Capture "greetid" Text :> Delete '[JSON] NoContent
-
--- altPStruct :: PStruct a -> PStruct a -> PStruct a
--- altPStruct x y = either id id <$> branch x y
-
-        -- \case
-    -- PBranch cs1 (Just c1) ep1 -> \case
-      -- PBranch _ _ ep2 -> PBranch (fmap Left <$> cs1) (Just (Left <$> c1))
-        --                          ((fmap Left <$> ep1) <> (fmap Right <$> ep2))
-    -- PBranch cs1 Nothing ep1 -> \case
-      -- PBranch cs2 c2 ep2 -> \case
-
-
--- testParser :: PStruct (Either Int (Either Bool String))
--- testParser = (`PBranch` Nothing) . M.fromList $
---     [ ("foo", fmap Left  . PEndpoint . liftAp $ Opt "o1" "opt 1" "INT" (auto @Int))
---     , ("bar", fmap Right . (`PBranch` Nothing) . M.fromList $
---         [ ("path1", fmap Left  . PEndpoint . liftAp $ Opt "o2" "opt 2" "BOOL" (auto @Bool))
---         , ("path2", Right <$> PEndpoint (pure "ok"))
---         ]
---       )
---     , ("baz", fmap (Right . Right) . PBranch M.empty . Just . Comp1 $
---           Coyoneda (PEndpoint . pure) (Opt "o3" "opt 3" "STRING" (liftYoneda (ORRequired (str @String))))
---       )
---     ]
-
--- structParser :: PStruct a -> Parser a
--- structParser = \case
---     PBranch m -> foldMap
--- structParser = \case
---     Free (Comp1 coms) -> subparser . foldMap mkCmd $ coms
---     FM.Pure x         -> pure x
---   where
---     mkCmd :: (Ap Opt :*: Com) (PStruct a) -> Mod CommandFields a
---     mkCmd (os :*: Com{..}) = command comName $
---         info (BindP (runAp mkOpt os <**> helper) structParser) (progDesc comDesc)
---     mkOpt :: Opt x -> Parser x
---     mkOpt Opt{..} = option optRead
---         ( long optName
---        <> help optDesc
---        <> metavar optMeta
---         )
-
-
--- type PStruct = Free ([] :.: (Ap Opt :*: Com))
-
--- structParser :: PStruct a -> Parser a
--- structParser = \case
---     Free (Comp1 coms) -> subparser . foldMap mkCmd $ coms
---     FM.Pure x         -> pure x
---   where
---     mkCmd :: (Ap Opt :*: Com) (PStruct a) -> Mod CommandFields a
---     mkCmd (os :*: Com{..}) = command comName $
---         info (BindP (runAp mkOpt os <**> helper) structParser) (progDesc comDesc)
---     mkOpt :: Opt x -> Parser x
---     mkOpt Opt{..} = option optRead
---         ( long optName
---        <> help optDesc
---        <> metavar optMeta
---         )
-
--- testParser :: PStruct (Either Int (Either Bool String))
--- testParser = Free . Comp1 $
---     [ fmap Left <$> liftAp (Opt "o1" "opt 1" "INT" (pure <$> auto @Int)) :*: Com "foo" "an int"
---     , fmap Right <$> pure innerTest :*: Com "bar" "something"
---     ]
---   where
---     innerTest :: PStruct (Either Bool String)
---     innerTest = liftF . Comp1 $
---       [ Left <$> liftAp (Opt "o2" "opt 2" "BOOL" auto) :*: Com "path1" "path 1"
---       -- , Right <$> liftAp (Opt "o3" "opt 3" "STRING" str) :*: Com "path2" "path 2"
---       , Right <$> pure "ok" :*: Com "path2" "path 2"
---       ]
-
--- testParser = liftF . Comp1 $
---     [ Left  <$> (liftAp (Opt "o1" "opt 1" "INT"  auto) :*: Com "foo" "an int")
---     , Right . Left <$> (liftAp (Opt "o2" "opt 2" "BOOL" auto) :*: Com "bar" "a bool")
---     , _
---     -- , Right . Right <$> (liftAp (Opt "o3" "opt 3" "STRING" str) :*: Com "bar" "a bool")
---     ]
-
--- type Com = Alt ComF
-
--- comParser
---     :: Alt Com a
---     -> Parser a
--- comParser = subparser . foldMap go . alternatives
---   where
---     go :: AltF Com x -> Mod CommandFields x
---     go = \case
---       Alt.Ap Com{..} y -> _ x y
---       Alt.Pure _ -> mempty
-
-
-
--- -- | Assorted information for making a command line argument or option
--- data PInfo a = PInfo
---     { piName :: String
---     , piDesc :: String
---     , piMeta :: String
---     , piRead :: ReadM a
---     }
-
--- type Opt = PInfo
--- type Arg = P
-
--- data StructureLayer :: Type -> Type where
---     SL :: Alt PInfo (x -> a)   -- ^ options
---        -> PInfo x              -- ^ command
---        -> StructureLayer a
-
---     SLOpt (Alt PInfo)
-
-
--- type Structure = Free (Ap PInfo :+: PInfo)
-
--- mkParser :: Structure a -> Parser a
--- mkParser = fromM . foldFree (oneM . go)
---   where
---     go :: (Ap PInfo :+: PInfo) x -> Parser x
---     go (L1 os         ) = runAp mkOpt os
---     go (R1 (PInfo{..})) = subparser $
---         command piName undefined
---     mkOpt :: PInfo x -> Parser x
---     mkOpt PInfo{..} = option piRead
---         ( long piName
---        <> help piDesc
---        <> metavar piMeta
---         )
-
--- toParser
---     :: Coyoneda (Ap Opt) a
---     -> Parser a
--- toParser (Coyoneda f os) = f <$> runAp go os
---   where
---     go :: Opt x -> Parser x
---     go Opt{..} = option optRead
---         ( long optName
---        <> help optDesc
---        <> metavar optMeta
---         )
-
-
--- f a = Demand { demandParser :: Parser a
---                          , demandNext   :: a -> b
---                          }
-
--- data Opts :: [Type] -> Type where
---     OBranch :: Rec NextStep as
---             -> Opts as
-
--- parserFromRouter :: Router' env a -> Parser a
--- parserFromRouter = \case
---     StaticRouter _ _ -> undefined
-
--- data Component = CStatic
---                | CCapture
-
--- data Endpoint :: [(Component, Symbol)]
-
--- data Route :: Type -> Type where
 
 -- class (HasDocs api, HasClient m api) => HasCLI m api where
 --     type CLI m api

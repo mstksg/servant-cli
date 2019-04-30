@@ -39,11 +39,14 @@ import           Control.Applicative.Free
 import           Control.Monad.Free
 import           Data.Bifunctor
 import           Data.Char
+import           Data.Function
+import           Data.Functor
 import           Data.Functor.Coyoneda
-import           Data.Functor.Yoneda
 import           Data.Functor.Foldable
 import           Data.Functor.Foldable.TH
+import           Data.Functor.Yoneda
 import           Data.Kind
+import           Data.Map                                  (Map)
 import           Data.Proxy
 import           Data.Semigroup hiding                     (Option(..), option, Arg(..))
 import           Data.Singletons
@@ -64,9 +67,13 @@ import           Text.Printf
 import           Type.Reflection
 import qualified Control.Alternative.Free                  as Alt
 import qualified Control.Monad.Free                        as FM
+import qualified Data.ByteString                           as BS
 import qualified Data.Map                                  as M
+import qualified Data.Monoid                               as Mo
 import qualified Data.Text                                 as T
+import qualified Data.Text.Encoding                        as T
 import qualified Data.Text.Lazy                            as TL
+import qualified Network.HTTP.Types                        as HTTP
 
 data OptRead :: Type -> Type where
     ORRequired :: ReadM a -> OptRead a
@@ -89,10 +96,9 @@ data Arg a = Arg
     }
 
 data PStruct :: Type -> Type where
-    PBranch   :: M.Map String (PStruct a)
+    PBranch   :: Map String (PStruct a)                -- ^ more components
               -> Maybe ((Coyoneda Arg :.: PStruct) a)  -- ^ capture
-              -> PStruct a
-    PEndpoint :: Ap Opt a
+              -> Map HTTP.Method (Ap Opt a)            -- ^ endpoints
               -> PStruct a
   deriving Functor
 
@@ -103,16 +109,19 @@ structParser = cata go
   where
     go :: forall x. PStructF x (Parser x) -> Parser x
     go = \case
-      PBranchF cs c ->
+      PBranchF cs c eps ->
         let (Any anySubs, subs) = M.foldMapWithKey mkCmd $ cs
-            cap  = fmap (mkArg . unComp1) c
-            subp = subparser subs
-        in  case cap of
-              Nothing   -> subp
-              Just cap'
-                | anySubs   -> subp <|> cap'
-                | otherwise -> cap'
-      PEndpointF os -> runAp mkOpt os
+            subp
+              | anySubs   = subparser subs
+              | otherwise = empty
+            cap  = maybe empty (mkArg . unComp1) c
+            epMap = runAp mkOpt <$> eps
+            ep = case M.minView epMap of
+              Nothing -> empty
+              Just (m0, ms)
+                | M.null ms -> m0
+                | otherwise -> subparser $ M.foldMapWithKey pickMethod epMap
+        in  subp <|> cap <|> ep
     mkCmd :: String -> Parser x -> (Any, Mod CommandFields x)
     mkCmd c p = (Any True, command c $ info (p <**> helper) mempty)
     mkArg :: Coyoneda Arg (PStruct x) -> Parser x
@@ -129,6 +138,63 @@ structParser = cata go
         mods = long optName
             <> help optDesc
             <> metavar optMeta
+    pickMethod :: BS.ByteString -> Parser x -> Mod CommandFields x
+    pickMethod m p = command (T.unpack . T.decodeUtf8 $ m) $ info (p <**> helper) mempty
+
+altPStruct :: PStruct a -> PStruct a -> PStruct a
+altPStruct (PBranch cs1 c1 ep1) (PBranch cs2 c2 ep2) = PBranch cs3 c3 ep3
+  where
+    cs3 = case c1 of
+      Just _  -> cs1
+      Nothing -> M.unionWith altPStruct cs1 cs2
+    c3  = c1 <|> c2
+    ep3 = ep1 <> ep2
+
+instance Semigroup (PStruct a) where
+    (<>) = altPStruct
+
+instance Monoid (PStruct a) where
+    mempty = PBranch M.empty Nothing M.empty
+
+branch :: PStruct a -> PStruct b -> PStruct (Either a b)
+branch x y = (Left <$> x) `altPStruct` (Right <$> y)
+
+($:>) :: String -> PStruct a -> PStruct a
+c $:> p = PBranch (M.singleton c p) Nothing M.empty
+
+(?:>) :: Opt a -> PStruct (a -> b) -> PStruct b
+o ?:> PBranch cs c ep = PBranch cs' c' ep'
+  where
+    cs' = (o ?:>) <$> cs
+    c'  = Comp1 . fmap (o ?:>) . unComp1 <$> c
+    ep' = (<*> liftAp o) <$> ep
+
+(#:>) :: Arg a -> (a -> PStruct b) -> PStruct b
+a #:> p = PBranch M.empty (Just (Comp1 (Coyoneda p a))) M.empty
+
+
+-- -- API specification
+-- type TestApi =
+--        -- GET /hello/:name?capital={true, false}  returns a Greet as JSON or PlainText
+--        "hello" :> Capture "name" Text :> QueryParam "capital" Bool :> Get '[JSON, PlainText] Greet
+
+--        -- POST /greet with a Greet as JSON in the request body,
+--        --             returns a Greet as JSON
+--   :<|> "greet" :> ReqBody '[JSON] Greet :> Post '[JSON] (Headers '[Header "X-Example" Int] Greet)
+
+--        -- DELETE /greet/:greetid
+--   :<|> "greet" :> Capture "greetid" Text :> Delete '[JSON] NoContent
+
+-- altPStruct :: PStruct a -> PStruct a -> PStruct a
+-- altPStruct x y = either id id <$> branch x y
+
+        -- \case
+    -- PBranch cs1 (Just c1) ep1 -> \case
+      -- PBranch _ _ ep2 -> PBranch (fmap Left <$> cs1) (Just (Left <$> c1))
+        --                          ((fmap Left <$> ep1) <> (fmap Right <$> ep2))
+    -- PBranch cs1 Nothing ep1 -> \case
+      -- PBranch cs2 c2 ep2 -> \case
+
 
 -- testParser :: PStruct (Either Int (Either Bool String))
 -- testParser = (`PBranch` Nothing) . M.fromList $

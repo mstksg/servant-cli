@@ -40,6 +40,8 @@ dependencies:
 - containers
 - recursion-schemes
 - vinyl
+- http-types
+- bytestring
 # - servant-server
 
 library:

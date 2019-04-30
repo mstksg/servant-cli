@@ -42,6 +42,7 @@ import           Data.Char
 import           Data.Function
 import           Data.Functor
 import           Data.Functor.Coyoneda
+import           Data.Functor.Day
 import           Data.Functor.Foldable
 import           Data.Functor.Foldable.TH
 import           Data.Functor.Yoneda
@@ -85,7 +86,7 @@ data Opt a = Opt
     { optName :: String
     , optDesc :: String
     , optMeta :: String
-    , optRead :: Yoneda OptRead a
+    , optRead :: Coyoneda OptRead a
     }
   deriving Functor
 
@@ -94,11 +95,12 @@ data Arg a = Arg
     , argMeta :: String
     , argRead :: ReadM a
     }
+  deriving Functor
 
 data PStruct :: Type -> Type where
-    PBranch   :: Map String (PStruct a)                -- ^ more components
-              -> Maybe ((Coyoneda Arg :.: PStruct) a)  -- ^ capture
-              -> Map HTTP.Method (Ap Opt a)            -- ^ endpoints
+    PBranch   :: Map String (PStruct a)     -- ^ more components
+              -> Maybe (Day Arg PStruct a)  -- ^ capture
+              -> Map HTTP.Method (Ap Opt a) -- ^ endpoints
               -> PStruct a
   deriving Functor
 
@@ -114,7 +116,7 @@ structParser = cata go
             subp
               | anySubs   = subparser subs
               | otherwise = empty
-            cap  = maybe empty (mkArg . unComp1) c
+            cap  = maybe empty mkArg c
             epMap = runAp mkOpt <$> eps
             ep = case M.minView epMap of
               Nothing -> empty
@@ -124,15 +126,17 @@ structParser = cata go
         in  subp <|> cap <|> ep
     mkCmd :: String -> Parser x -> (Any, Mod CommandFields x)
     mkCmd c p = (Any True, command c $ info (p <**> helper) mempty)
-    mkArg :: Coyoneda Arg (PStruct x) -> Parser x
-    mkArg (Coyoneda f Arg{..}) = (`BindP` structParser . f) . argument argRead $
-          help argDesc
-       <> metavar argMeta
+    mkArg :: Day Arg PStruct x -> Parser x
+    mkArg (Day Arg{..} p f) = f <$> argument argRead mods
+                                <*> structParser p
+      where
+        mods = help argDesc
+            <> metavar argMeta
     mkOpt :: Opt x -> Parser x
-    mkOpt Opt{..} = case runYoneda optRead id of
+    mkOpt Opt{..} = lowerCoyoneda $ (`hoistCoyoneda` optRead) $ \case
         ORRequired r -> option r mods
         OROptional r -> optional $ option r mods
-        ORSwitch     -> switch $ long optName <> help optDesc
+        ORSwitch     -> switch   $ long optName <> help optDesc
       where
         mods :: Mod OptionFields y
         mods = long optName
@@ -159,18 +163,64 @@ instance Monoid (PStruct a) where
 branch :: PStruct a -> PStruct b -> PStruct (Either a b)
 branch x y = (Left <$> x) `altPStruct` (Right <$> y)
 
+infixr 3 `branch`
+
 ($:>) :: String -> PStruct a -> PStruct a
 c $:> p = PBranch (M.singleton c p) Nothing M.empty
 
-(?:>) :: Opt a -> PStruct (a -> b) -> PStruct b
+infixr 4 $:>
+
+(?:>) :: forall a b. Opt a -> PStruct (a -> b) -> PStruct b
 o ?:> PBranch cs c ep = PBranch cs' c' ep'
   where
     cs' = (o ?:>) <$> cs
-    c'  = Comp1 . fmap (o ?:>) . unComp1 <$> c
+    c'  = c <&> \case
+        Day a p f -> let f' x y z = f z x y
+                     in  Day a (o ?:> (f' <$> p)) (&)
     ep' = (<*> liftAp o) <$> ep
 
-(#:>) :: Arg a -> (a -> PStruct b) -> PStruct b
-a #:> p = PBranch M.empty (Just (Comp1 (Coyoneda p a))) M.empty
+infixr 4 ?:>
+
+(#:>) :: Arg a -> PStruct (a -> b) -> PStruct b
+a #:> p = PBranch M.empty (Just (Day a p (&))) M.empty
+
+infixr 4 #:>
+
+endpoint :: HTTP.Method -> a -> PStruct a
+endpoint m = PBranch M.empty Nothing . M.singleton m . pure
+
+orRequired :: ReadM a -> Coyoneda OptRead a
+orRequired = liftCoyoneda . ORRequired
+
+orOptional :: ReadM a -> Coyoneda OptRead (Maybe a)
+orOptional = liftCoyoneda . OROptional
+
+orSwitch :: Coyoneda OptRead Bool
+orSwitch = liftCoyoneda ORSwitch
+
+testStruct = hello
+  where
+    hello = "hello"
+        $:> Arg "name" "<name>" (str @String)
+        #:> Opt "capital" "capital" "BOOL" orSwitch
+        ?:> endpoint HTTP.methodGet (,)
+
+-- data Arg a = Arg
+--     { argDesc :: String
+--     , argMeta :: String
+--     , argRead :: ReadM a
+--     }
+--   deriving Functor
+
+
+-- -- | Query parameters are interpreted as Opt
+-- data Opt a = Opt
+--     { optName :: String
+--     , optDesc :: String
+--     , optMeta :: String
+--     , optRead :: Coyoneda OptRead a
+--     }
+--   deriving Functor
 
 
 -- -- API specification

@@ -32,6 +32,7 @@ module Servant.CLI where
 --   -- , ToParam(..), DocQueryParam(..)
 --   ) where
 
+-- import           Data.Singletons.Prelude.List
 -- import           Servant.Server.Internal
 import           Control.Alternative.Free
 import           Control.Applicative.Free
@@ -39,16 +40,17 @@ import           Control.Monad.Free
 import           Data.Bifunctor
 import           Data.Char
 import           Data.Functor.Coyoneda
-import           Data.Functor.Foldable.TH
+import           Data.Functor.Yoneda
 import           Data.Functor.Foldable
+import           Data.Functor.Foldable.TH
 import           Data.Kind
 import           Data.Proxy
+import           Data.Semigroup hiding                     (Option(..), option, Arg(..))
 import           Data.Singletons
-import           Data.Singletons.Prelude.List
-import           Data.Type.Predicate.Quantification
+import           Data.Type.Predicate.Quantification hiding (Any)
 import           Data.Vinyl
 import           GHC.Generics
-import           GHC.TypeLits hiding                (Mod)
+import           GHC.TypeLits hiding                       (Mod)
 import           Options.Applicative
 import           Options.Applicative.Types
 import           Servant.API
@@ -60,91 +62,38 @@ import           Servant.Docs
 import           Servant.Docs.Internal
 import           Text.Printf
 import           Type.Reflection
-import qualified Control.Alternative.Free           as Alt
-import qualified Control.Monad.Free                 as FM
-import qualified Data.Map                           as M
-import qualified Data.Text                          as T
-import qualified Data.Text.Lazy                     as TL
+import qualified Control.Alternative.Free                  as Alt
+import qualified Control.Monad.Free                        as FM
+import qualified Data.Map                                  as M
+import qualified Data.Text                                 as T
+import qualified Data.Text.Lazy                            as TL
 
--- data OptionParser a
-
--- data Opts :: Type -> Type where
---     OBranch :: OptionParser b
---             -> (b -> Opts a)
---             -> Opts a
-
--- data OptionParser a
--- data NextOpts a
-
--- data NextStep :: Type -> Type where
---     NextStep :: OptionParser
-
--- data Demand :: (Type -> Type) -> Type -> Type where
---     Demand :: f x
---            -> (x -> b)
---            -> Demand f b
+data OptRead :: Type -> Type where
+    ORRequired :: ReadM a -> OptRead a
+    OROptional :: ReadM a -> OptRead (Maybe a)
+    ORSwitch   :: OptRead Bool
 
 -- | Query parameters are interpreted as Opt
 data Opt a = Opt
     { optName :: String
     , optDesc :: String
     , optMeta :: String
-    , optRead :: ReadM a
+    , optRead :: Yoneda OptRead a
     }
   deriving Functor
 
--- type Opt = Ap OptF
-
--- -- | Path components are interpreted as subcommands
--- data Com a = Com
---     { comName :: String
---     , comDesc :: String
---     }
---   deriving Functor
-
--- newtype PStruct a = PStruct (([] :.: (Ap Opt :*: Com)) a)
-
--- data PStructF :: Type -> Type where
---     PSF :: { psOpts :: Ap Opt x
---            , psComs :: [x -> Com a]
---            }
---          -> PStructF a
-
--- type PStruct = Free PStructF
-
--- structParser :: PStruct a -> Parser a
--- structParser = \case
---     Free (PSF{..}) -> 
-
--- TODO: hm, we have some issues here.  what about situations where the
--- query params come before the command?  i guess it is important at least
--- to re-order the query params to be all at the end, since that's how it's
--- like.
---
--- But in the "help" we'd want query params to show up as they are needed.
--- so that's what the Free ([] :.: Ap Opt :*: Com) gives us.
---
--- However the problem with Free ([] :.: Apt Opt) is that we can't get any
--- options at the top level.
---
--- I think, to mimic actual REST usage, we need to have all query params at
--- the final level.  That's where they belong.  The thing that has to get
--- added per-level are captures.
---
--- So it looks like we have to "distribute" all of the query params to the
--- end of the trees.
-
--- -- | Path components are interpreted as subcommands
--- data Com a = Com
---     { comName :: String
---     , comDesc :: String
---     }
---   deriving Functor
+data Arg a = Arg
+    { argDesc :: String
+    , argMeta :: String
+    , argRead :: ReadM a
+    }
 
 data PStruct :: Type -> Type where
     PBranch   :: M.Map String (PStruct a)
+              -> Maybe ((Coyoneda Arg :.: PStruct) a)  -- ^ capture
               -> PStruct a
-    PEndpoint :: Ap Opt a -> PStruct a
+    PEndpoint :: Ap Opt a
+              -> PStruct a
   deriving Functor
 
 makeBaseFunctor ''PStruct
@@ -152,40 +101,47 @@ makeBaseFunctor ''PStruct
 structParser :: PStruct a -> Parser a
 structParser = cata go
   where
-    go :: PStructF a (Parser a) -> Parser a
+    go :: forall x. PStructF x (Parser x) -> Parser x
     go = \case
-      PBranchF cs   -> subparser . M.foldMapWithKey mkCmd $ cs
+      PBranchF cs c ->
+        let (Any anySubs, subs) = M.foldMapWithKey mkCmd $ cs
+            cap  = fmap (mkArg . unComp1) c
+            subp = subparser subs
+        in  case cap of
+              Nothing   -> subp
+              Just cap'
+                | anySubs   -> subp <|> cap'
+                | otherwise -> cap'
       PEndpointF os -> runAp mkOpt os
-    mkCmd :: String -> Parser x -> Mod CommandFields x
-    mkCmd c p = command c $ info (p <**> helper) mempty
+    mkCmd :: String -> Parser x -> (Any, Mod CommandFields x)
+    mkCmd c p = (Any True, command c $ info (p <**> helper) mempty)
+    mkArg :: Coyoneda Arg (PStruct x) -> Parser x
+    mkArg (Coyoneda f Arg{..}) = (`BindP` structParser . f) . argument argRead $
+          help argDesc
+       <> metavar argMeta
     mkOpt :: Opt x -> Parser x
-    mkOpt Opt{..} = option optRead $
-          long optName
-       <> help optDesc
-       <> metavar optMeta
+    mkOpt Opt{..} = case runYoneda optRead id of
+        ORRequired r -> option r mods
+        OROptional r -> optional $ option r mods
+        ORSwitch     -> switch $ long optName <> help optDesc
+      where
+        mods :: Mod OptionFields y
+        mods = long optName
+            <> help optDesc
+            <> metavar optMeta
 
-testParser :: PStruct (Either Int (Either Bool String))
-testParser = PBranch . M.fromList $
-    [ ("foo", fmap Left  . PEndpoint . liftAp $ Opt "o1" "opt 1" "INT" (auto @Int))
-    , ("bar", fmap Right . PBranch . M.fromList $
-        [ ("path1", fmap Left  . PEndpoint . liftAp $ Opt "o2" "opt 2" "BOOL" (auto @Bool))
-        , ("path2", Right <$> PEndpoint (pure "ok"))
-
-        ]
-      )
-    ]
-        -- Free . Comp1 $
-    -- [ fmap Left <$> liftAp (Opt "o1" "opt 1" "INT" (pure <$> auto @Int)) :*: Com "foo" "an int"
-    -- , fmap Right <$> pure innerTest :*: Com "bar" "something"
-    -- ]
-  -- where
-    -- innerTest :: PStruct (Either Bool String)
-    -- innerTest = liftF . Comp1 $
-      -- [ Left <$> liftAp (Opt "o2" "opt 2" "BOOL" auto) :*: Com "path1" "path 1"
-      -- -- , Right <$> liftAp (Opt "o3" "opt 3" "STRING" str) :*: Com "path2" "path 2"
-      -- , Right <$> pure "ok" :*: Com "path2" "path 2"
-      -- ]
-
+-- testParser :: PStruct (Either Int (Either Bool String))
+-- testParser = (`PBranch` Nothing) . M.fromList $
+--     [ ("foo", fmap Left  . PEndpoint . liftAp $ Opt "o1" "opt 1" "INT" (auto @Int))
+--     , ("bar", fmap Right . (`PBranch` Nothing) . M.fromList $
+--         [ ("path1", fmap Left  . PEndpoint . liftAp $ Opt "o2" "opt 2" "BOOL" (auto @Bool))
+--         , ("path2", Right <$> PEndpoint (pure "ok"))
+--         ]
+--       )
+--     , ("baz", fmap (Right . Right) . PBranch M.empty . Just . Comp1 $
+--           Coyoneda (PEndpoint . pure) (Opt "o3" "opt 3" "STRING" (liftYoneda (ORRequired (str @String))))
+--       )
+--     ]
 
 -- structParser :: PStruct a -> Parser a
 -- structParser = \case

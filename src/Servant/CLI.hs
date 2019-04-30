@@ -1,6 +1,7 @@
 {-# LANGUAGE DefaultSignatures     #-}
 {-# LANGUAGE DeriveFunctor         #-}
 {-# LANGUAGE DeriveTraversable     #-}
+{-# LANGUAGE DerivingVia           #-}
 {-# LANGUAGE EmptyCase             #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
@@ -11,6 +12,7 @@
 {-# LANGUAGE PolyKinds             #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
@@ -35,7 +37,9 @@ module Servant.CLI where
 -- import           Data.Singletons.Prelude.List
 -- import           Servant.Server.Internal
 import           Control.Alternative.Free
+import           Control.Applicative
 import           Control.Applicative.Free
+import           Control.Applicative.Lift
 import           Control.Monad.Free
 import           Data.Bifunctor
 import           Data.Char
@@ -45,6 +49,7 @@ import           Data.Functor.Coyoneda
 import           Data.Functor.Day
 import           Data.Functor.Foldable
 import           Data.Functor.Foldable.TH
+import           Data.Functor.Identity
 import           Data.Functor.Yoneda
 import           Data.Kind
 import           Data.Map                                  (Map)
@@ -53,6 +58,7 @@ import           Data.Semigroup hiding                     (Option(..), option, 
 import           Data.Singletons
 import           Data.Type.Predicate.Quantification hiding (Any)
 import           Data.Vinyl
+import           Debug.Trace
 import           GHC.Generics
 import           GHC.TypeLits hiding                       (Mod)
 import           Options.Applicative
@@ -62,8 +68,8 @@ import           Servant.API.ContentTypes
 import           Servant.API.Modifiers
 import           Servant.Client
 import           Servant.Client.Core
-import           Servant.Docs
-import           Servant.Docs.Internal
+import           Servant.Docs hiding                       (Endpoint)
+import           Servant.Docs.Internal hiding              (Endpoint(..))
 import           Text.Printf
 import           Type.Reflection
 import qualified Control.Alternative.Free                  as Alt
@@ -76,12 +82,21 @@ import qualified Data.Text.Encoding                        as T
 import qualified Data.Text.Lazy                            as TL
 import qualified Network.HTTP.Types                        as HTTP
 
+-- | Captures are interpreted as arguments
+data Arg a = Arg
+    { argDesc :: String
+    , argMeta :: String
+    , argRead :: ReadM a
+    }
+  deriving Functor
+
+-- | How to "read" an option.
 data OptRead :: Type -> Type where
     ORRequired :: ReadM a -> OptRead a
     OROptional :: ReadM a -> OptRead (Maybe a)
     ORSwitch   :: OptRead Bool
 
--- | Query parameters are interpreted as Opt
+-- | Query parameters are interpreted as options
 data Opt a = Opt
     { optName :: String
     , optDesc :: String
@@ -90,17 +105,31 @@ data Opt a = Opt
     }
   deriving Functor
 
-data Arg a = Arg
-    { argDesc :: String
-    , argMeta :: String
-    , argRead :: ReadM a
-    }
-  deriving Functor
+-- | Endpoint arguments and body.
+data Endpoint :: Type -> Type where
+    Endpoint :: { epOpts :: Ap Opt x
+                , epBody :: Parser y
+                , epOut  :: (x -> y -> a)
+                }
+             -> Endpoint a
+
+deriving instance Functor Endpoint
+instance Applicative Endpoint where
+    pure x = Endpoint (pure ()) (pure ()) $ \_ _ -> x
+    liftA2 f (Endpoint o1 b1 f1) (Endpoint o2 b2 f2)
+        = Endpoint (liftA2 (,) o1 o2) (liftA2 (,) b1 b2) $ \(x1, x2) (y1, y2) ->
+            f (f1 x1 y1) (f2 x2 y2)
+
+-- deriving via (Day (Ap Opt) Parser) instance Applicative Endpoint
+
+        -- a = Endpoint
+    -- { epOpts :: Ap Opt a
+    -- }
 
 data PStruct :: Type -> Type where
-    PBranch   :: Map String (PStruct a)     -- ^ more components
-              -> Maybe (Day Arg PStruct a)  -- ^ capture
-              -> Map HTTP.Method (Ap Opt a) -- ^ endpoints
+    PBranch   :: Map String (PStruct a)       -- ^ more components
+              -> Maybe (Day Arg PStruct a)    -- ^ capture
+              -> Map HTTP.Method (Endpoint a) -- ^ endpoints
               -> PStruct a
   deriving Functor
 
@@ -117,7 +146,8 @@ structParser = cata go
               | anySubs   = subparser subs
               | otherwise = empty
             cap  = maybe empty mkArg c
-            epMap = runAp mkOpt <$> eps
+            epMap = mkEndpoint <$> eps
+            -- ep = traceShow (M.keys epMap) $ case M.minView epMap of
             ep = case M.minView epMap of
               Nothing -> empty
               Just (m0, ms)
@@ -132,6 +162,10 @@ structParser = cata go
       where
         mods = help argDesc
             <> metavar argMeta
+    mkEndpoint :: Endpoint x -> Parser x
+    mkEndpoint Endpoint{..} = epOut
+        <$> runAp mkOpt epOpts
+        <*> epBody
     mkOpt :: Opt x -> Parser x
     mkOpt Opt{..} = lowerCoyoneda $ (`hoistCoyoneda` optRead) $ \case
         ORRequired r -> option r mods
@@ -152,7 +186,7 @@ altPStruct (PBranch cs1 c1 ep1) (PBranch cs2 c2 ep2) = PBranch cs3 c3 ep3
       Just _  -> cs1
       Nothing -> M.unionWith altPStruct cs1 cs2
     c3  = c1 <|> c2
-    ep3 = ep1 <> ep2
+    ep3 = M.unionWith const ep1 ep2
 
 instance Semigroup (PStruct a) where
     (<>) = altPStruct
@@ -167,7 +201,6 @@ infixr 3 `branch`
 
 ($:>) :: String -> PStruct a -> PStruct a
 c $:> p = PBranch (M.singleton c p) Nothing M.empty
-
 infixr 4 $:>
 
 (?:>) :: forall a b. Opt a -> PStruct (a -> b) -> PStruct b
@@ -177,14 +210,29 @@ o ?:> PBranch cs c ep = PBranch cs' c' ep'
     c'  = c <&> \case
         Day a p f -> let f' x y z = f z x y
                      in  Day a (o ?:> (f' <$> p)) (&)
-    ep' = (<*> liftAp o) <$> ep
-
+    ep' = ep <&> \case
+        Endpoint eo eb ef ->
+          Endpoint ((,) <$> liftAp o <*> eo) eb $ \(x, y) z -> ef y z x
 infixr 4 ?:>
+
 
 (#:>) :: Arg a -> PStruct (a -> b) -> PStruct b
 a #:> p = PBranch M.empty (Just (Day a p (&))) M.empty
-
 infixr 4 #:>
+
+-- | Add a request body.  NOTE!!!!! UNDEFINED BEHAVIOR IF DONE MORE THAN
+-- ONCE?
+(%:>) :: Parser a -> PStruct (a -> b) -> PStruct b
+b %:> PBranch cs c ep = PBranch cs' c' ep'
+  where
+    cs' = (b %:>) <$> cs
+    c'  = c <&> \case
+        Day a p f -> let f' x y z = f z x y
+                     in  Day a (b %:> (f' <$> p)) (&)
+    ep' = ep <&> \case
+        Endpoint eo eb ef ->
+          Endpoint eo (liftA2 (,) b eb) $ \x (y, z) -> ef x z y
+infixr 4 %:>
 
 endpoint :: HTTP.Method -> a -> PStruct a
 endpoint m = PBranch M.empty Nothing . M.singleton m . pure
@@ -198,12 +246,29 @@ orOptional = liftCoyoneda . OROptional
 orSwitch :: Coyoneda OptRead Bool
 orSwitch = liftCoyoneda ORSwitch
 
-testStruct = hello
+defaultParseBody :: forall a. Typeable a => ReadM a -> Parser a
+defaultParseBody r = option r
+    ( metavar (map toUpper tp)
+   <> long "data"
+   <> short 'd'
+   <> help (printf "Request body (%s)" tp)
+    )
+  where
+    tp = show (typeRep @a)
+
+testStruct :: PStruct (Either (Bool, String) String)
+testStruct = hello `branch` (greetDelete <> greetPost)
   where
     hello = "hello"
         $:> Arg "name" "<name>" (str @String)
         #:> Opt "capital" "capital" "BOOL" orSwitch
         ?:> endpoint HTTP.methodGet (,)
+    greetPost = "greet"
+            $:> defaultParseBody (str @String)
+            %:> endpoint HTTP.methodPost (map toUpper)
+    greetDelete = "greet"
+            $:> Arg "greetid" "<greetid>" (str @String)
+            #:> endpoint HTTP.methodDelete (map toLower)
 
 -- data Arg a = Arg
 --     { argDesc :: String

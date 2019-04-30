@@ -42,6 +42,7 @@ dependencies:
 - vinyl
 - http-types
 - bytestring
+- transformers
 # - servant-server
 
 library:

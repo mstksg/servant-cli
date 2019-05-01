@@ -54,6 +54,7 @@ import           Data.Functor.Identity
 import           Data.Functor.Yoneda
 import           Data.Kind
 import           Data.Map                                  (Map)
+import           Data.Profunctor
 import           Data.Proxy
 import           Data.Semigroup hiding                     (Option(..), option, Arg(..))
 import           Data.Singletons
@@ -152,7 +153,7 @@ structParser_ = cata go
   where
     go :: PStructF x (Bool -> [String] -> ParserInfo x) -> Bool -> [String] -> ParserInfo x
     go (PStructF ns cs c eps) toHelp p = info ((subp <|> cap <|> ep) <**> mkHelp) $
-           briefDesc
+           fullDesc
         <> header (joinPath p)
         <> progDescDoc (Just (O.vcat . map O.string $ ns'))
       where
@@ -171,7 +172,8 @@ structParser_ = cata go
     mkArg :: [String] -> Day Arg PStruct x -> ([String], Parser x)
     mkArg ps (Day a p f) =
           ( []
-          , f <$> argParser a <*> infoParser (structParser_ p False (ps ++ [':' : argName a]))
+          , f <$> argParser a
+              <*> infoParser (structParser_ p False (ps ++ [':' : argName a]))
           )
     mkArgs :: Day MultiArg (Map HTTP.Method :.: Endpoint) x -> Parser x
     mkArgs (Day (MultiArg a) (Comp1 ps) f) =
@@ -325,76 +327,107 @@ testStruct = note "test program" $ hello `branch` (greetDelete <> greetPost <> w
            $:> Arg "name" "name" "<name>" (str @String)
            #:> endpoint HTTP.methodGet reverse
 
--- class (HasDocs api, HasClient m api) => HasCLI m api where
---     type CLI m api
+class (HasDocs api, HasClient m api) => HasCLI m api where
+    type CLI m api
 
---     clientParser_
---         :: Proxy m
---         -> Proxy api
---         -> Client m api
---         -> Parser (m (CLI m api))
+    clientParser_
+        :: Proxy m
+        -> Proxy api
+        -> PStruct (Request -> CLI m api)
 
--- instance HasClient m EmptyAPI => HasCLI m EmptyAPI where
---     type CLI m EmptyAPI = EmptyClient
---     clientParser_ _ _ = pure . pure
+-- | 'EmptyAPI' will always fail.
+instance HasClient m EmptyAPI => HasCLI m EmptyAPI where
+    type CLI m EmptyAPI = EmptyClient
+    clientParser_ _ _ = mempty
 
--- instance (HasCLI m a, HasCLI m b) => HasCLI m (a :<|> b) where
---     type CLI m (a :<|> b) = Either (CLI m a) (CLI m b)
---     clientParser_ pm _ (cA :<|> cB) = (fmap Left  <$> clientParser_ pm (Proxy @a) cA)
---                                  <|> (fmap Right <$> clientParser_ pm (Proxy @b) cB)
+-- | Using alternation with ':<|>' provides an 'Either' between the two
+-- results.
+instance (HasCLI m a, HasCLI m b) => HasCLI m (a :<|> b) where
+    type CLI m (a :<|> b) = Either (CLI m a) (CLI m b)
+    clientParser_ pm _ = (fmap Left  <$> clientParser_ pm (Proxy @a))
+                      <> (fmap Right <$> clientParser_ pm (Proxy @b))
 
--- instance (KnownSymbol path, HasCLI m api) => HasCLI m (path :> api) where
---     type CLI m (path :> api) = CLI m api
---     clientParser_ pm _ api = subparser $
---          command pathstr ( info (clientParser_ pm (Proxy @api) api <**> helper) mempty)
---       <> metavar pathstr
---       where
---         pathstr = symbolVal (Proxy @path)
+-- | A path component is interpreted as a "subcommand".
+instance (KnownSymbol path, HasCLI m api) => HasCLI m (path :> api) where
+    type CLI m (path :> api) = CLI m api
+    clientParser_ pm _ = pathstr $:>
+        (fmap . lmap) (appendToPath (T.pack pathstr))
+                      (clientParser_ pm (Proxy @api))
+      where
+        pathstr = symbolVal (Proxy @path)
 
--- instance ( KnownSymbol sym
---          , FromHttpApiData a
---          , ToHttpApiData a
---          , Typeable a
---          , ToCapture (Capture sym a)
---          , HasCLI m api
---          ) => HasCLI m (Capture' mods sym a :> api) where
---     type CLI m (Capture' mods sym a :> api) = CLI m api
---     clientParser_ pm _ api = BindP arg $ clientParser_ pm (Proxy @api) . api
---       where
---         arg :: Parser a
---         arg = argument (eitherReader (first T.unpack . parseUrlPiece @a . T.pack))
---                 ( metavar (map toUpper _capSymbol)
---                <> help (printf "%s (%s)" _capDesc capType)
---                 )
---         capType = show $ typeRep @a
---         DocCapture{..} = toCapture (Proxy @(Capture sym a))
+-- | A 'Capture' is interpreted as a positional required command line argument.
+instance ( KnownSymbol sym
+         , FromHttpApiData a
+         , ToHttpApiData a
+         , Typeable a
+         , ToCapture (Capture sym a)
+         , HasCLI m api
+         ) => HasCLI m (Capture' mods sym a :> api) where
+    type CLI m (Capture' mods sym a :> api) = CLI m api
+    clientParser_ pm _ = arg #:>
+        (fmap . flip) (lmap . addCapture) (clientParser_ pm (Proxy @api))
+      where
+        addCapture = appendToPath . toUrlPiece
+        arg = Arg
+          { argName = _capSymbol
+          , argDesc = printf "%s (%s)" _capDesc capType
+          , argMeta = printf "<%s>" _capSymbol
+          , argRead = eitherReader $ first T.unpack . parseUrlPiece @a . T.pack
+          }
+        capType = show $ typeRep @a
+        DocCapture{..} = toCapture (Proxy @(Capture sym a))
 
--- instance ( KnownSymbol sym
---          , FromHttpApiData a
---          , ToHttpApiData a
---          , SBoolI (FoldRequired' 'False mods)
---          , Typeable a
---          , ToParam (QueryParam' mods sym a)
---          , HasCLI m api
---          ) => HasCLI m (QueryParam' mods sym a :> api) where
---     type CLI m (QueryParam' mods sym a :> api) = CLI m api
---     clientParser_ pm _ api = BindP opt' $ clientParser_ pm (Proxy @api) . api
---       where
---         opt :: Parser a
---         opt = option (eitherReader (first T.unpack . parseUrlPiece @a . T.pack))
---                 ( metavar (map toUpper pType)
---                <> long pName
---                <> help (printf "%s (%s)" _paramDesc pType)
---                 )
---         opt' :: Parser (If (FoldRequired' 'False mods) a (Maybe a))
---         opt' = case sbool @(FoldRequired' 'False mods) of
---           STrue  -> opt
---           SFalse -> optional opt
---         pType = show $ typeRep @a
---         pName = symbolVal (Proxy @sym)
---         DocQueryParam{..} = toParam (Proxy @(QueryParam' mods sym a))
---         -- TODO: experiment with more detailed help doc
---         -- also, we can offer completion with values
+instance ( KnownSymbol sym
+         , FromHttpApiData a
+         , ToHttpApiData a
+         , SBoolI (FoldRequired' 'False mods)
+         , Typeable a
+         , ToParam (QueryParam' mods sym a)
+         , HasCLI m api
+         ) => HasCLI m (QueryParam' mods sym a :> api) where
+    type CLI m (QueryParam' mods sym a :> api) = CLI m api
+    clientParser_ pm _ = undefined
+    -- clientParser_ pm _ = case sbool @(FoldRequired' 'False mods) of
+    --     STrue  -> opt (orRequired r) ?:>
+    --         (fmap . flip) (lmap . addParam) (clientParser_ pm (Proxy @api))
+        -- SFalse -> undefined
+    -- opt _ ?:> _
+    -- clientParser_ pm _ api = BindP opt' $ clientParser_ pm (Proxy @api) . api
+      where
+        -- addParam ::
+        opt oR = Opt
+          { optName = pName
+          , optDesc = printf "%s (%s)" _paramDesc pType
+          , optMeta = map toUpper pType
+          , optRead = oR
+          }
+        -- um is this right? should there be a better way?
+        r = eitherReader $ first T.unpack . parseUrlPiece @a . T.pack
+-- -- | Query parameters are interpreted as options
+-- data Opt a = Opt
+--     { optName :: String
+--     , optDesc :: String
+--     , optMeta :: String
+--     , optRead :: Coyoneda OptRead a
+--     }
+--   deriving Functor
+
+        -- opt :: Parser a
+        -- opt = option (eitherReader (first T.unpack . parseUrlPiece @a . T.pack))
+        --         ( metavar (map toUpper pType)
+        --        <> long pName
+        --        <> help (printf "%s (%s)" _paramDesc pType)
+        --         )
+        -- opt' :: Parser (If (FoldRequired' 'False mods) a (Maybe a))
+        -- opt' = case sbool @(FoldRequired' 'False mods) of
+        --   STrue  -> opt
+        --   SFalse -> optional opt
+        pType             = show $ typeRep @a
+        pName             = symbolVal (Proxy @sym)
+        DocQueryParam{..} = toParam (Proxy @(QueryParam' mods sym a))
+        -- TODO: experiment with more detailed help doc
+        -- also, we can offer completion with values
 
 -- instance ( KnownSymbol sym
 --          , ToParam (QueryFlag sym)

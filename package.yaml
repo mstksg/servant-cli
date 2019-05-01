@@ -44,6 +44,7 @@ dependencies:
 - bytestring
 - transformers
 - filepath
+- profunctors
 # - servant-server
 
 library:

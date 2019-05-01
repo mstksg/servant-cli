@@ -43,6 +43,7 @@ dependencies:
 - http-types
 - bytestring
 - transformers
+- filepath
 # - servant-server
 
 library:

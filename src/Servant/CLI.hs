@@ -12,21 +12,19 @@
 {-# LANGUAGE UndecidableInstances  #-}
 
 module Servant.CLI (
-    HasCLI, CLI
+    parseClient
+  , HasCLI, CLI
   , clientPStruct
-  , parseClient
-  , ParseBody(..)
-  , defaultParseBody
-  , structParser
   -- * Re-export
-  , ToSample(..)
+  , ParseBody(..)
   , ToCapture(..), DocCapture(..)
   , ToParam(..), DocQueryParam(..)
   ) where
 
 import           Data.Proxy
 import           Options.Applicative
-import           Servant.CLI.Internal
+import           Servant.CLI.HasCLI
+import           Servant.CLI.ParseBody
 import           Servant.CLI.Structure
 import           Servant.Client.Core
 import           Servant.Docs

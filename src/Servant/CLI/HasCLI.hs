@@ -11,10 +11,8 @@
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
 
-module Servant.CLI.Internal (
+module Servant.CLI.HasCLI (
     HasCLI(..)
-  , ParseBody(..)
-  , defaultParseBody
   ) where
 
 import           Data.Bifunctor
@@ -27,6 +25,7 @@ import           GHC.TypeLits hiding   (Mod)
 import           Options.Applicative
 import           Servant.API hiding    (addHeader)
 import           Servant.API.Modifiers
+import           Servant.CLI.ParseBody
 import           Servant.CLI.Structure
 import           Servant.Client
 import           Servant.Client.Core
@@ -38,7 +37,6 @@ import qualified Data.CaseInsensitive  as CI
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Text             as T
 import qualified Data.Text.Encoding    as T
-import qualified Data.Text.Lazy        as TL
 
 -- | Typeclass defining how each API combinator influences how a server can
 -- be interacted with using command line options.
@@ -198,7 +196,6 @@ instance ( MimeRender ct a
       where
         ctProxy = Proxy @ct
         addBody b = setRequestBodyLBS (mimeRender ctProxy b) (contentType ctProxy)
-    -- TODO: use tosample to provide samples?
 
 -- | Final actions are the result of specifying all necessary command line
 -- positional arguments.
@@ -367,37 +364,3 @@ instance HasCLI m api => HasCLI m (BasicAuth realm usr :> api) where
             -> BasicAuthData
             -> CLI m api
         addAuth f r d = f . basicAuthReq d $ r
-
-
--- | A helper class for defining directly how to parse request bodies.
--- This allows more complex parsing of bodies.
-class ParseBody a where
-    parseBody :: Parser a
-
-    default parseBody :: (Typeable a, Read a) => Parser a
-    parseBody = defaultParseBody (show (typeRep @a)) auto
-
-defaultParseBody
-    :: String       -- ^ type specification
-    -> ReadM a      -- ^ parser
-    -> Parser a
-defaultParseBody mv r = option r
-    ( metavar (printf "<%s>" (map toLower mv))
-   <> long "data"
-   <> short 'd'
-   <> help (printf "Request body (%s)" mv)
-    )
-
-instance ParseBody String where
-    parseBody = defaultParseBody "Text" str
-
-instance ParseBody T.Text where
-    parseBody = defaultParseBody "Text" str
-
-instance ParseBody TL.Text where
-    parseBody = defaultParseBody "Text" str
-
-instance ParseBody Int where
-instance ParseBody Integer where
-instance ParseBody Float where
-instance ParseBody Double where

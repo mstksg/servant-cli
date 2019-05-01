@@ -17,10 +17,11 @@ data OptRead :: Type -> Type
 
 -- | Query parameters are interpreted as options
 data Opt a
-Opt :: String -> String -> String -> Coyoneda OptRead a -> Opt a
+Opt :: String -> String -> String -> Maybe (NonEmpty String) -> Coyoneda OptRead a -> Opt a
 [optName] :: Opt a -> String
 [optDesc] :: Opt a -> String
 [optMeta] :: Opt a -> String
+[optVals] :: Opt a -> Maybe (NonEmpty String)
 [optRead] :: Opt a -> Coyoneda OptRead a
 
 -- | Captures are interpreted as arguments
@@ -55,14 +56,24 @@ PStruct :: [String] -> Map String (PStruct a) -> Maybe (Captures a) -> Map Metho
 
 -- | endpoints
 [psEndpoints] :: PStruct a -> Map Method (Endpoint a)
-data PStructF (a_ah0J :: Type) r_ai1w
-PStructF :: [[Char]] -> Map [Char] r_ai1w -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg ((:.:) (Map ByteString) Endpoint)) a_ah0J) -> Map ByteString (Endpoint a_ah0J) -> PStructF r_ai1w
-[psInfoF] :: PStructF r_ai1w -> [[Char]]
-[psComponentsF] :: PStructF r_ai1w -> Map [Char] r_ai1w
-[psCapturesF] :: PStructF r_ai1w -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg ((:.:) (Map ByteString) Endpoint)) a_ah0J)
-[psEndpointsF] :: PStructF r_ai1w -> Map ByteString (Endpoint a_ah0J)
-structParser :: PStruct a -> ParserInfo a
-structParser_ :: PStruct a -> Bool -> [String] -> ParserInfo a
+data PStructF (a_ahkU :: Type) r_aim7
+PStructF :: [[Char]] -> Map [Char] r_aim7 -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg ((:.:) (Map ByteString) Endpoint)) a_ahkU) -> Map ByteString (Endpoint a_ahkU) -> PStructF r_aim7
+[psInfoF] :: PStructF r_aim7 -> [[Char]]
+[psComponentsF] :: PStructF r_aim7 -> Map [Char] r_aim7
+[psCapturesF] :: PStructF r_aim7 -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg ((:.:) (Map ByteString) Endpoint)) a_ahkU)
+[psEndpointsF] :: PStructF r_aim7 -> Map ByteString (Endpoint a_ahkU)
+
+-- | Convert a <a>PStruct</a> into a command line argument parser, from the
+--   <i>optparse-applicative</i> library. It can be run with
+--   <a>execParser</a>.
+--   
+--   It takes options on how the top-level prompt is displayed when given
+--   <tt>"--help"</tt>; it can be useful for adding a header or program
+--   description. Otherwise, just use <a>mempty</a>.
+structParser :: PStruct a -> InfoMod a -> ParserInfo a
+
+-- | Low-level implementation of <a>structParser</a>.
+structParser_ :: PStruct a -> Bool -> [String] -> InfoMod a -> ParserInfo a
 
 -- | Combine two <a>PStruct</a>s, preferring the left hand side for
 --   conflicts. If the left hand has a capture, the right hand's components
@@ -70,24 +81,44 @@ structParser_ :: PStruct a -> Bool -> [String] -> ParserInfo a
 altPStruct :: PStruct a -> PStruct a -> PStruct a
 branch :: PStruct a -> PStruct b -> PStruct (Either a b)
 infixr 3 `branch`
+
+-- | Shift by a path component.
 ($:>) :: String -> PStruct a -> PStruct a
 infixr 4 $:>
 
--- | Add a request body. NOTE!!!!! UNDEFINED BEHAVIOR IF DONE MORE THAN
---   ONCE?
+-- | Add a request body to all endpoints. NOTE!!!!! UNDEFINED BEHAVIOR IF
+--   DONE MORE THAN ONCE?
 (%:>) :: Parser a -> PStruct (a -> b) -> PStruct b
 infixr 4 %:>
+
+-- | Add a command-line option to all endpoints.
 (?:>) :: Opt a -> PStruct (a -> b) -> PStruct b
 infixr 4 ?:>
+
+-- | Add a single argument praser.
 (#:>) :: Arg a -> PStruct (a -> b) -> PStruct b
 infixr 4 #:>
+
+-- | Add a repeating argument parser.
 (##:>) :: Arg a -> PStruct ([a] -> b) -> PStruct b
 infixr 4 ##:>
+
+-- | Add a note.
 note :: String -> PStruct a -> PStruct a
 infixr 4 `note`
+
+-- | Create an endpoint action.
 endpoint :: Method -> a -> PStruct a
+
+-- | Helper to lift a <a>ReadM</a> into something that can be used with
+--   <a>optRead</a>.
 orRequired :: ReadM a -> Coyoneda OptRead a
+
+-- | Helper to lift an optional <a>ReadM</a> into something that can be
+--   used with <a>optRead</a>.
 orOptional :: ReadM a -> Coyoneda OptRead (Maybe a)
+
+-- | An <a>optRead</a> that is on-or-off.
 orSwitch :: Coyoneda OptRead Bool
 instance Data.Traversable.Traversable (Servant.CLI.Structure.PStructF a)
 instance Data.Foldable.Foldable (Servant.CLI.Structure.PStructF a)
@@ -102,16 +133,44 @@ instance GHC.Base.Functor Servant.CLI.Structure.Arg
 instance GHC.Base.Functor Servant.CLI.Structure.Opt
 
 module Servant.CLI
+
+-- | Typeclass defining how each API combinator influences how a server can
+--   be interacted with using command line options.
+--   
+--   Unless you are adding new combinators to be used with APIs, you can
+--   ignore this class.
 class HasCLI m api where {
     type family CLI m api;
 }
 clientParser_ :: HasCLI m api => Proxy m -> Proxy api -> PStruct (Request -> CLI m api)
+
+-- | Create a structure for a command line parser.
 clientPStruct :: HasCLI m api => Proxy api -> Proxy m -> PStruct (CLI m api)
-parseClient :: HasCLI ClientM api => Proxy api -> IO (CLI ClientM api)
+
+-- | Parse a servant client; the result can be run. A good choice of
+--   <tt>m</tt> is <a>ClientM</a>.
+--   
+--   It takes options on how the top-level prompt is displayed when given
+--   <tt>"--help"</tt>; it can be useful for adding a header or program
+--   description. Otherwise, just use <a>mempty</a>.
+parseClient :: HasCLI m api => Proxy api -> Proxy m -> InfoMod (CLI m api) -> IO (CLI m api)
+
+-- | A helper class for defining directly how to parse request bodies. This
+--   allows more complex parsing of bodies.
 class ParseBody a
 parseBody :: ParseBody a => Parser a
 parseBody :: (ParseBody a, Typeable a, Read a) => Parser a
-defaultParseBody :: forall a. Typeable a => ReadM a -> Parser a
+defaultParseBody :: String -> ReadM a -> Parser a
+_testStruct :: PStruct (Either (Bool, String) String)
+
+-- | Convert a <a>PStruct</a> into a command line argument parser, from the
+--   <i>optparse-applicative</i> library. It can be run with
+--   <a>execParser</a>.
+--   
+--   It takes options on how the top-level prompt is displayed when given
+--   <tt>"--help"</tt>; it can be useful for adding a header or program
+--   description. Otherwise, just use <a>mempty</a>.
+structParser :: PStruct a -> InfoMod a -> ParserInfo a
 
 -- | The class that lets us display a sample input or output in the
 --   supported content-types when generating documentation for endpoints

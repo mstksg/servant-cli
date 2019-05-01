@@ -27,25 +27,20 @@ ghc-options:
 
 dependencies:
 - base >= 4.7 && < 5
-- text
+- bytestring
+- containers
+- filepath
+- free
+- http-types
+- kan-extensions
 - optparse-applicative
+- profunctors
+- recursion-schemes
 - servant
-- servant-docs
 - servant-client
 - servant-client-core
-- decidable
-- singletons
-- kan-extensions
-- free
-- containers
-- recursion-schemes
-- vinyl
-- http-types
-- bytestring
-- transformers
-- filepath
-- profunctors
-# - servant-server
+- servant-docs
+- text
 
 library:
   source-dirs: src

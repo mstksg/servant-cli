@@ -102,18 +102,10 @@ instance GHC.Base.Functor Servant.CLI.Structure.Arg
 instance GHC.Base.Functor Servant.CLI.Structure.Opt
 
 module Servant.CLI
-
--- | This class lets us define how each API combinator influences the
---   creation of an HTTP request.
---   
---   Unless you are writing a new backend for <tt>servant-client-core</tt>
---   or new combinators that you want to support client-generation, you can
---   ignore this class.
-class RunClient m => HasClient (m :: Type -> Type) api where {
-    type family Client (m :: Type -> Type) api :: Type;
+class HasCLI m api where {
+    type family CLI m api;
 }
-clientWithRoute :: HasClient m api => Proxy m -> Proxy api -> Request -> Client m api
-hoistClientMonad :: HasClient m api => Proxy m -> Proxy api -> (forall x. () => mon x -> mon' x) -> Client mon api -> Client mon' api
+clientParser_ :: HasCLI m api => Proxy m -> Proxy api -> PStruct (Request -> CLI m api)
 clientPStruct :: HasCLI m api => Proxy api -> Proxy m -> PStruct (CLI m api)
 parseClient :: HasCLI ClientM api => Proxy api -> IO (CLI ClientM api)
 class ParseBody a

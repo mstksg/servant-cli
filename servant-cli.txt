@@ -7,6 +7,21 @@
 @package servant-cli
 @version 0.1.0.0
 
+module Servant.CLI.ParseBody
+
+-- | A helper class for defining directly how to parse request bodies. This
+--   allows more complex parsing of bodies.
+class ParseBody a
+parseBody :: ParseBody a => Parser a
+parseBody :: (ParseBody a, Typeable a, Read a) => Parser a
+defaultParseBody :: String -> ReadM a -> Parser a
+instance Servant.CLI.ParseBody.ParseBody Data.Text.Internal.Text
+instance Servant.CLI.ParseBody.ParseBody Data.Text.Internal.Lazy.Text
+instance Servant.CLI.ParseBody.ParseBody GHC.Types.Int
+instance Servant.CLI.ParseBody.ParseBody GHC.Integer.Type.Integer
+instance Servant.CLI.ParseBody.ParseBody GHC.Types.Float
+instance Servant.CLI.ParseBody.ParseBody GHC.Types.Double
+
 module Servant.CLI.Structure
 
 -- | How to "read" an option.
@@ -58,12 +73,12 @@ PStruct :: [String] -> Map String (PStruct a) -> Maybe (Captures a) -> EndpointM
 -- | captures
 [psCaptures] :: PStruct a -> Maybe (Captures a)
 [psEndpoints] :: PStruct a -> EndpointMap a
-data PStructF (a_ah0f :: Type) r_ai2T
-PStructF :: [[Char]] -> Map [Char] r_ai2T -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ah0f) -> EndpointMap a_ah0f -> PStructF r_ai2T
-[psInfoF] :: PStructF r_ai2T -> [[Char]]
-[psComponentsF] :: PStructF r_ai2T -> Map [Char] r_ai2T
-[psCapturesF] :: PStructF r_ai2T -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ah0f)
-[psEndpointsF] :: PStructF r_ai2T -> EndpointMap a_ah0f
+data PStructF (a_aj23 :: Type) r_ajKI
+PStructF :: [[Char]] -> Map [Char] r_ajKI -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_aj23) -> EndpointMap a_aj23 -> PStructF r_ajKI
+[psInfoF] :: PStructF r_ajKI -> [[Char]]
+[psComponentsF] :: PStructF r_ajKI -> Map [Char] r_ajKI
+[psCapturesF] :: PStructF r_ajKI -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_aj23)
+[psEndpointsF] :: PStructF r_ajKI -> EndpointMap a_aj23
 
 -- | Convert a <a>PStruct</a> into a command line argument parser, from the
 --   <i>optparse-applicative</i> library. It can be run with
@@ -146,7 +161,7 @@ instance GHC.Base.Functor Servant.CLI.Structure.Endpoint
 instance GHC.Base.Functor Servant.CLI.Structure.Arg
 instance GHC.Base.Functor Servant.CLI.Structure.Opt
 
-module Servant.CLI.Internal
+module Servant.CLI.HasCLI
 
 -- | Typeclass defining how each API combinator influences how a server can
 --   be interacted with using command line options.
@@ -157,44 +172,38 @@ class HasCLI m api where {
     type family CLI (m :: Type -> Type) (api :: Type) :: Type;
 }
 clientPStruct_ :: HasCLI m api => Proxy m -> Proxy api -> PStruct (Request -> CLI m api)
-
--- | A helper class for defining directly how to parse request bodies. This
---   allows more complex parsing of bodies.
-class ParseBody a
-parseBody :: ParseBody a => Parser a
-parseBody :: (ParseBody a, Typeable a, Read a) => Parser a
-defaultParseBody :: String -> ReadM a -> Parser a
-instance (Servant.API.ContentTypes.MimeRender ct a, Servant.CLI.Internal.ParseBody a, Servant.CLI.Internal.HasCLI m api) => Servant.CLI.Internal.HasCLI m (Servant.API.ReqBody.ReqBody' mods (ct : cts) a Servant.API.Sub.:> api)
-instance Servant.CLI.Internal.ParseBody GHC.Base.String
-instance Servant.CLI.Internal.ParseBody Data.Text.Internal.Text
-instance Servant.CLI.Internal.ParseBody Data.Text.Internal.Lazy.Text
-instance Servant.CLI.Internal.ParseBody GHC.Types.Int
-instance Servant.CLI.Internal.ParseBody GHC.Integer.Type.Integer
-instance Servant.CLI.Internal.ParseBody GHC.Types.Float
-instance Servant.CLI.Internal.ParseBody GHC.Types.Double
-instance Servant.CLI.Internal.HasCLI m Servant.API.Empty.EmptyAPI
-instance (Servant.CLI.Internal.HasCLI m a, Servant.CLI.Internal.HasCLI m b) => Servant.CLI.Internal.HasCLI m (a Servant.API.Alternative.:<|> b)
-instance (GHC.TypeLits.KnownSymbol path, Servant.CLI.Internal.HasCLI m api) => Servant.CLI.Internal.HasCLI m (path Servant.API.Sub.:> api)
-instance (Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToCapture (Servant.API.Capture.Capture sym a), Servant.CLI.Internal.HasCLI m api) => Servant.CLI.Internal.HasCLI m (Servant.API.Capture.Capture' mods sym a Servant.API.Sub.:> api)
-instance (Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToCapture (Servant.API.Capture.CaptureAll sym a), Servant.CLI.Internal.HasCLI m api) => Servant.CLI.Internal.HasCLI m (Servant.API.Capture.CaptureAll sym a Servant.API.Sub.:> api)
-instance (GHC.TypeLits.KnownSymbol sym, Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Singletons.Bool.SBoolI (Servant.API.Modifiers.FoldRequired' 'GHC.Types.False mods), Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToParam (Servant.API.QueryParam.QueryParam' mods sym a), Servant.CLI.Internal.HasCLI m api) => Servant.CLI.Internal.HasCLI m (Servant.API.QueryParam.QueryParam' mods sym a Servant.API.Sub.:> api)
-instance (GHC.TypeLits.KnownSymbol sym, Servant.Docs.Internal.ToParam (Servant.API.QueryParam.QueryFlag sym), Servant.CLI.Internal.HasCLI m api) => Servant.CLI.Internal.HasCLI m (Servant.API.QueryParam.QueryFlag sym Servant.API.Sub.:> api)
-instance forall k1 (m :: * -> *) (method :: k1) (status :: GHC.Types.Nat) (cts' :: [*]) a. (Servant.Client.Core.HasClient.HasClient m (Servant.API.Verbs.Verb method status cts' a), Servant.API.Verbs.ReflectMethod method) => Servant.CLI.Internal.HasCLI m (Servant.API.Verbs.Verb method status cts' a)
-instance forall k1 (m :: * -> *) ct chunk (method :: k1) framing a (status :: GHC.Types.Nat). (Servant.Client.Core.RunClient.RunStreamingClient m, Servant.API.ContentTypes.MimeUnrender ct chunk, Servant.API.Verbs.ReflectMethod method, Servant.API.Stream.FramingUnrender framing, Servant.API.Stream.FromSourceIO chunk a) => Servant.CLI.Internal.HasCLI m (Servant.API.Stream.Stream method status framing ct a)
-instance (Servant.API.Stream.ToSourceIO chunk a, Servant.API.ContentTypes.MimeRender ctype chunk, Servant.API.Stream.FramingRender framing, Servant.CLI.Internal.HasCLI m api) => Servant.CLI.Internal.HasCLI m (Servant.API.Stream.StreamBody' mods framing ctype a Servant.API.Sub.:> api)
-instance (GHC.TypeLits.KnownSymbol sym, Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Singletons.Bool.SBoolI (Servant.API.Modifiers.FoldRequired' 'GHC.Types.False mods), Data.Typeable.Internal.Typeable a, Servant.CLI.Internal.HasCLI m api) => Servant.CLI.Internal.HasCLI m (Servant.API.Header.Header' mods sym a Servant.API.Sub.:> api)
-instance Servant.CLI.Internal.HasCLI m api => Servant.CLI.Internal.HasCLI m (Network.HTTP.Types.Version.HttpVersion Servant.API.Sub.:> api)
-instance (GHC.TypeLits.KnownSymbol desc, Servant.CLI.Internal.HasCLI m api) => Servant.CLI.Internal.HasCLI m (Servant.API.Description.Summary desc Servant.API.Sub.:> api)
-instance (GHC.TypeLits.KnownSymbol desc, Servant.CLI.Internal.HasCLI m api) => Servant.CLI.Internal.HasCLI m (Servant.API.Description.Description desc Servant.API.Sub.:> api)
-instance Servant.Client.Core.RunClient.RunClient m => Servant.CLI.Internal.HasCLI m Servant.API.Raw.Raw
-instance Servant.CLI.Internal.HasCLI m api => Servant.CLI.Internal.HasCLI m (Data.Vault.Lazy.Vault Servant.API.Sub.:> api)
-instance Servant.CLI.Internal.HasCLI m api => Servant.CLI.Internal.HasCLI m (Servant.API.RemoteHost.RemoteHost Servant.API.Sub.:> api)
-instance Servant.CLI.Internal.HasCLI m api => Servant.CLI.Internal.HasCLI m (Servant.API.IsSecure.IsSecure Servant.API.Sub.:> api)
-instance Servant.CLI.Internal.HasCLI m subapi => Servant.CLI.Internal.HasCLI m (Servant.API.WithNamedContext.WithNamedContext name context subapi)
-instance forall k (m :: * -> *) api (tag :: k). Servant.CLI.Internal.HasCLI m api => Servant.CLI.Internal.HasCLI m (Servant.API.Experimental.Auth.AuthProtect tag Servant.API.Sub.:> api)
-instance Servant.CLI.Internal.HasCLI m api => Servant.CLI.Internal.HasCLI m (Servant.API.BasicAuth.BasicAuth realm usr Servant.API.Sub.:> api)
+instance Servant.CLI.HasCLI.HasCLI m Servant.API.Empty.EmptyAPI
+instance (Servant.CLI.HasCLI.HasCLI m a, Servant.CLI.HasCLI.HasCLI m b) => Servant.CLI.HasCLI.HasCLI m (a Servant.API.Alternative.:<|> b)
+instance (GHC.TypeLits.KnownSymbol path, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (path Servant.API.Sub.:> api)
+instance (Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToCapture (Servant.API.Capture.Capture sym a), Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Capture.Capture' mods sym a Servant.API.Sub.:> api)
+instance (Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToCapture (Servant.API.Capture.CaptureAll sym a), Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Capture.CaptureAll sym a Servant.API.Sub.:> api)
+instance (GHC.TypeLits.KnownSymbol sym, Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Singletons.Bool.SBoolI (Servant.API.Modifiers.FoldRequired' 'GHC.Types.False mods), Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToParam (Servant.API.QueryParam.QueryParam' mods sym a), Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.QueryParam.QueryParam' mods sym a Servant.API.Sub.:> api)
+instance (GHC.TypeLits.KnownSymbol sym, Servant.Docs.Internal.ToParam (Servant.API.QueryParam.QueryFlag sym), Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.QueryParam.QueryFlag sym Servant.API.Sub.:> api)
+instance (Servant.API.ContentTypes.MimeRender ct a, Servant.CLI.ParseBody.ParseBody a, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.ReqBody.ReqBody' mods (ct : cts) a Servant.API.Sub.:> api)
+instance forall k1 (m :: * -> *) (method :: k1) (status :: GHC.Types.Nat) (cts' :: [*]) a. (Servant.Client.Core.HasClient.HasClient m (Servant.API.Verbs.Verb method status cts' a), Servant.API.Verbs.ReflectMethod method) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Verbs.Verb method status cts' a)
+instance forall k1 (m :: * -> *) ct chunk (method :: k1) framing a (status :: GHC.Types.Nat). (Servant.Client.Core.RunClient.RunStreamingClient m, Servant.API.ContentTypes.MimeUnrender ct chunk, Servant.API.Verbs.ReflectMethod method, Servant.API.Stream.FramingUnrender framing, Servant.API.Stream.FromSourceIO chunk a) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Stream.Stream method status framing ct a)
+instance (Servant.API.Stream.ToSourceIO chunk a, Servant.API.ContentTypes.MimeRender ctype chunk, Servant.API.Stream.FramingRender framing, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Stream.StreamBody' mods framing ctype a Servant.API.Sub.:> api)
+instance (GHC.TypeLits.KnownSymbol sym, Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Singletons.Bool.SBoolI (Servant.API.Modifiers.FoldRequired' 'GHC.Types.False mods), Data.Typeable.Internal.Typeable a, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Header.Header' mods sym a Servant.API.Sub.:> api)
+instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Network.HTTP.Types.Version.HttpVersion Servant.API.Sub.:> api)
+instance (GHC.TypeLits.KnownSymbol desc, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Description.Summary desc Servant.API.Sub.:> api)
+instance (GHC.TypeLits.KnownSymbol desc, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Description.Description desc Servant.API.Sub.:> api)
+instance Servant.Client.Core.RunClient.RunClient m => Servant.CLI.HasCLI.HasCLI m Servant.API.Raw.Raw
+instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Data.Vault.Lazy.Vault Servant.API.Sub.:> api)
+instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Servant.API.RemoteHost.RemoteHost Servant.API.Sub.:> api)
+instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Servant.API.IsSecure.IsSecure Servant.API.Sub.:> api)
+instance Servant.CLI.HasCLI.HasCLI m subapi => Servant.CLI.HasCLI.HasCLI m (Servant.API.WithNamedContext.WithNamedContext name context subapi)
+instance forall k (m :: * -> *) api (tag :: k). Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Servant.API.Experimental.Auth.AuthProtect tag Servant.API.Sub.:> api)
+instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Servant.API.BasicAuth.BasicAuth realm usr Servant.API.Sub.:> api)
 
 module Servant.CLI
+
+-- | Parse a servant client; the result can be run. A good choice of
+--   <tt>m</tt> is <tt>ClientM</tt>.
+--   
+--   It takes options on how the top-level prompt is displayed when given
+--   <tt>"--help"</tt>; it can be useful for adding a header or program
+--   description. Otherwise, just use <a>mempty</a>.
+parseClient :: HasCLI m api => Proxy api -> Proxy m -> InfoMod (CLI m api) -> IO (CLI m api)
 
 -- | Typeclass defining how each API combinator influences how a server can
 --   be interacted with using command line options.
@@ -207,67 +216,11 @@ type family CLI (m :: Type -> Type) (api :: Type) :: Type
 -- | Create a structure for a command line parser.
 clientPStruct :: HasCLI m api => Proxy api -> Proxy m -> PStruct (CLI m api)
 
--- | Parse a servant client; the result can be run. A good choice of
---   <tt>m</tt> is <tt>ClientM</tt>.
---   
---   It takes options on how the top-level prompt is displayed when given
---   <tt>"--help"</tt>; it can be useful for adding a header or program
---   description. Otherwise, just use <a>mempty</a>.
-parseClient :: HasCLI m api => Proxy api -> Proxy m -> InfoMod (CLI m api) -> IO (CLI m api)
-
 -- | A helper class for defining directly how to parse request bodies. This
 --   allows more complex parsing of bodies.
 class ParseBody a
 parseBody :: ParseBody a => Parser a
 parseBody :: (ParseBody a, Typeable a, Read a) => Parser a
-defaultParseBody :: String -> ReadM a -> Parser a
-
--- | Convert a <a>PStruct</a> into a command line argument parser, from the
---   <i>optparse-applicative</i> library. It can be run with
---   <a>execParser</a>.
---   
---   It takes options on how the top-level prompt is displayed when given
---   <tt>"--help"</tt>; it can be useful for adding a header or program
---   description. Otherwise, just use <a>mempty</a>.
-structParser :: PStruct a -> InfoMod a -> ParserInfo a
-
--- | The class that lets us display a sample input or output in the
---   supported content-types when generating documentation for endpoints
---   that either:
---   
---   <ul>
---   <li>expect a request body, or</li>
---   <li>return a non empty response body</li>
---   </ul>
---   
---   Example of an instance:
---   
---   <pre>
---   {-# LANGUAGE DeriveGeneric #-}
---   {-# LANGUAGE OverloadedStrings #-}
---   
---   import Data.Aeson
---   import Data.Text
---   import GHC.Generics
---   
---   data Greet = Greet { _msg :: Text }
---     deriving (Generic, Show)
---   
---   instance FromJSON Greet
---   instance ToJSON Greet
---   
---   instance ToSample Greet where
---     toSamples _ = singleSample g
---   
---       where g = Greet "Hello, haskeller!"
---   </pre>
---   
---   You can also instantiate this class using <a>toSamples</a> instead of
---   <a>toSample</a>: it lets you specify different responses along with
---   some context (as <a>ErrorMessage</a>) that explains when you're
---   supposed to get the corresponding response.
-class ToSample a
-toSamples :: ToSample a => Proxy a -> [(Text, a)]
 
 -- | The class that helps us automatically get documentation for URL
 --   captures.

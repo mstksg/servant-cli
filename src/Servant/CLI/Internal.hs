@@ -156,7 +156,6 @@ instance ( KnownSymbol sym
           | otherwise         = "options: " ++ intercalate ", " _paramValues
         pName = symbolVal (Proxy @sym)
         DocQueryParam{..} = toParam (Proxy @(QueryParam' mods sym a))
-        -- TODO: experiment with more detailed help doc
 
 -- | Query flags are interpreted as command line flags/switches.
 --

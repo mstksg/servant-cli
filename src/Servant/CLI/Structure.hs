@@ -106,10 +106,9 @@ data PStruct a = PStruct
     , psComponents :: Map String (PStruct a)         -- ^ path components
     , psCaptures   :: Maybe (Captures a)             -- ^ captures
     , psEndpoints  :: EndpointMap a
-    -- , psEndpoints  :: Map HTTP.Method (Endpoint a)   -- ^ endpoints
-    -- , psRaw        :: Maybe (Day ((:~:) HTTP.Method) Endpoint a)
     }
   deriving Functor
+-- TODO: Capture vs. Endpoint interplay is a bit weird.
 
 makeBaseFunctor ''PStruct
 
@@ -149,12 +148,11 @@ structParser_ = cata go
         subs = M.foldMapWithKey (mkCmd p) psComponentsF
         subp
           | M.null psComponentsF = empty
-          | otherwise            = subparser $ subs <> metavar "COMPONENT"
+          | otherwise            = subparser $ subs
+                                            <> metavar "COMPONENT"
+                                            <> commandGroup "Path components:"
         (nsc, cap) = maybe ([], empty) (mkArg p |+| (([],) . mkArgs)) psCapturesF
         ep         = methodPicker psEndpointsF
-        -- rawp
-        --   | M.null psEndpointsF = maybe empty mkRaw psRawF
-        --   | otherwise           = empty
         ns         = psInfoF ++ nsc
         mkHelp
           | toHelp    = helper
@@ -197,6 +195,7 @@ structParser_ = cata go
           | otherwise -> subparser $ M.foldMapWithKey pickMethod epMap
                                   <> foldMap mkRawCommand rw
                                   <> metavar "METHOD"
+                                  <> commandGroup "HTTP Methods:"
       where
         epMap = mkEndpoint <$> eps
     mkEndpoint :: Endpoint x -> Parser x
@@ -289,14 +288,6 @@ addEPMOpt o (EPM e r) = EPM e' r'
     r' = r <&> \(Day rr re rf) ->
           let f' x y z = rf z x y
           in  Day rr (addEndpointOpt o (f' <$> re)) (&)
-
--- addEPMBody b (EPM e r) = EPM e' r'
---   where
---     e' = addEndpointBody b <$> e
---     r' = r <&> \(Day rr re rf) ->
---           let f' x y z = rf z x y
---           in  Day rr (addEndpointBody b (f' <$> re)) (&)
-
 
 -- | Add a note.
 note :: String -> PStruct a -> PStruct a

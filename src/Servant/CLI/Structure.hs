@@ -27,6 +27,7 @@ module Servant.CLI.Structure (
   ) where
 
 import           Control.Applicative.Free
+import           Data.Foldable
 import           Data.Function
 import           Data.Functor
 import           Data.Functor.Coyoneda
@@ -34,6 +35,7 @@ import           Data.Functor.Day
 import           Data.Functor.Foldable
 import           Data.Functor.Foldable.TH
 import           Data.Kind
+import           Data.List.NonEmpty              (NonEmpty(..))
 import           Data.Map                        (Map)
 import           Data.Semigroup hiding           (Option(..), option, Arg(..))
 import           GHC.Generics
@@ -58,6 +60,7 @@ data Opt a = Opt
     { optName :: String
     , optDesc :: String
     , optMeta :: String
+    , optVals :: Maybe (NonEmpty String)
     , optRead :: Coyoneda OptRead a
     }
   deriving Functor
@@ -104,21 +107,33 @@ f |+| g = \case
 mapInnerComp :: Functor f => (g a -> g b) -> (f :.: g) a -> (f :.: g) b
 mapInnerComp f (Comp1 x) = Comp1 (fmap f x)
 
-structParser :: PStruct a -> ParserInfo a
-structParser = ($ []) . ($ True) . structParser_
+-- | Convert a 'PStruct' into a command line argument parser, from the
+-- /optparse-applicative/ library.  It can be run with 'execParser'.
+--
+-- It takes options on how the top-level prompt is displayed when given
+-- @"--help"@; it can be useful for adding a header or program description.
+-- Otherwise, just use 'mempty'.
+structParser
+    :: PStruct a        -- ^ The 'PStruct' to convert.
+    -> InfoMod a        -- ^ Modify how the top-level prompt is displayed.
+    -> ParserInfo a
+structParser = flip $ \im -> ($ im) . ($ []) . ($ True) . structParser_
 
+-- | Low-level implementation of 'structParser'.
 structParser_
     :: PStruct a
     -> Bool         -- ^ add helper
     -> [String]     -- ^ root path
+    -> InfoMod a    -- ^ modify top level
     -> ParserInfo a
 structParser_ = cata go
   where
-    go :: PStructF x (Bool -> [String] -> ParserInfo x) -> Bool -> [String] -> ParserInfo x
-    go (PStructF ns cs c eps) toHelp p = info ((subp <|> cap <|> ep) <**> mkHelp) $
+    go :: PStructF x (Bool -> [String] -> InfoMod x -> ParserInfo x) -> Bool -> [String] -> InfoMod x -> ParserInfo x
+    go (PStructF ns cs c eps) toHelp p im = info ((subp <|> cap <|> ep) <**> mkHelp) $
            fullDesc
         <> header (joinPath p)
         <> progDescDoc (Just (O.vcat . map O.string $ ns'))
+        <> im
       where
         (Any anySubs, subs) = M.foldMapWithKey (mkCmd p) $ cs
         subp
@@ -130,13 +145,17 @@ structParser_ = cata go
         mkHelp
           | toHelp    = helper
           | otherwise = pure id
-    mkCmd :: [String] -> String -> (Bool -> [String] -> ParserInfo x) -> (Any, Mod CommandFields x)
-    mkCmd ps c p = (Any True, command c (p True (ps ++ [c])))
+    mkCmd
+        :: [String]
+        -> String
+        -> (Bool -> [String] -> InfoMod x -> ParserInfo x)
+        -> (Any, Mod CommandFields x)
+    mkCmd ps c p = (Any True, command c (p True (ps ++ [c]) mempty))
     mkArg :: [String] -> Day Arg PStruct x -> ([String], Parser x)
     mkArg ps (Day a p f) =
           ( []
           , f <$> argParser a
-              <*> infoParser (structParser_ p False (ps ++ [':' : argName a]))
+              <*> infoParser (structParser_ p False (ps ++ [':' : argName a]) mempty)
           )
     mkArgs :: Day MultiArg (Map HTTP.Method :.: Endpoint) x -> Parser x
     mkArgs (Day (MultiArg a) (Comp1 ps) f) =
@@ -155,6 +174,7 @@ structParser_ = cata go
         mods = long optName
             <> help optDesc
             <> metavar optMeta
+            <> foldMap (completeWith . toList) optVals
     methodPicker :: Map HTTP.Method (Endpoint x) -> Parser x
     methodPicker eps = case M.minView epMap of
         Nothing       -> empty
@@ -192,10 +212,12 @@ branch x y = (Left <$> x) `altPStruct` (Right <$> y)
 
 infixr 3 `branch`
 
+-- | Shift by a path component.
 ($:>) :: String -> PStruct a -> PStruct a
 c $:> p = mempty { psComponents = M.singleton c p }
 infixr 4 $:>
 
+-- | Add a command-line option to all endpoints.
 (?:>) :: Opt a -> PStruct (a -> b) -> PStruct b
 o ?:> PStruct ns cs c ep = PStruct ns cs' c' ep'
   where
@@ -214,20 +236,23 @@ addEndpointOpt :: Opt a -> Endpoint (a -> b) -> Endpoint b
 addEndpointOpt o (Endpoint (Day eo eb ef)) =
     Endpoint (Day ((,) <$> liftAp o <*> eo) eb $ \(x, y) z -> ef y z x)
 
+-- | Add a note.
 note :: String -> PStruct a -> PStruct a
 note n (PStruct ns cs c ep) = PStruct (ns ++ [n]) cs c ep
 infixr 4 `note`
 
+-- | Add a single argument praser.
 (#:>) :: Arg a -> PStruct (a -> b) -> PStruct b
 a #:> p = mempty { psCaptures = Just (L1 (Day a p (&))) }
 infixr 4 #:>
 
+-- | Add a repeating argument parser.
 (##:>) :: Arg a -> PStruct ([a] -> b) -> PStruct b
 a ##:> p = mempty { psCaptures = Just (R1 (Day (MultiArg a) (Comp1 (psEndpoints p)) (&))) }
 infixr 4 ##:>
 
--- | Add a request body.  NOTE!!!!! UNDEFINED BEHAVIOR IF DONE MORE THAN
--- ONCE?
+-- | Add a request body to all endpoints.  NOTE!!!!! UNDEFINED BEHAVIOR IF
+-- DONE MORE THAN ONCE?
 (%:>) :: Parser a -> PStruct (a -> b) -> PStruct b
 b %:> PStruct ns cs c ep = PStruct ns cs' c' ep'
   where
@@ -247,15 +272,20 @@ addEndpointBody b (Endpoint (Day eo eb ef)) =
     Endpoint (Day eo (liftA2 (,) b eb) $ \x (y, z) -> ef x z y)
 
 
+-- | Create an endpoint action.
 endpoint :: HTTP.Method -> a -> PStruct a
 endpoint m x = mempty { psEndpoints = M.singleton m (Endpoint (pure x)) }
 
+-- | Helper to lift a 'ReadM' into something that can be used with 'optRead'.
 orRequired :: ReadM a -> Coyoneda OptRead a
 orRequired = liftCoyoneda . ORRequired
 
+-- | Helper to lift an optional 'ReadM' into something that can be used
+-- with 'optRead'.
 orOptional :: ReadM a -> Coyoneda OptRead (Maybe a)
 orOptional = liftCoyoneda . OROptional
 
+-- | An 'optRead' that is on-or-off.
 orSwitch :: Coyoneda OptRead Bool
 orSwitch = liftCoyoneda ORSwitch
 

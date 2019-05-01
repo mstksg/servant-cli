@@ -14,8 +14,10 @@ import           Data.Proxy
 import           Data.String.Conversions
 import           Data.Text               (Text)
 import           GHC.Generics
+import           Options.Applicative
 import           Servant.API
 import           Servant.CLI
+import           Servant.Client
 import           Servant.Docs
 
 -- * Example
@@ -105,4 +107,6 @@ extra =
                                      ]
 
 main :: IO ()
-main = void $ parseClient testApi
+main = void . parseClient testApi (Proxy @ClientM) $
+                  header "example"
+               <> progDesc "Example API"

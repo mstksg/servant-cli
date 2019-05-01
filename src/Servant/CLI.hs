@@ -13,11 +13,13 @@
 {-# LANGUAGE UndecidableInstances  #-}
 
 module Servant.CLI (
-    HasClient(..)
+    HasCLI(..)
   , clientPStruct
   , parseClient
   , ParseBody(..)
   , defaultParseBody
+  , _testStruct
+  , structParser
   -- * Re-export
   , ToSample(..)
   , ToCapture(..), DocCapture(..)
@@ -26,6 +28,7 @@ module Servant.CLI (
 
 import           Data.Bifunctor
 import           Data.Char
+import           Data.List
 import           Data.Profunctor
 import           Data.Proxy
 import           GHC.TypeLits hiding   (Mod)
@@ -38,6 +41,7 @@ import           Servant.Client.Core
 import           Servant.Docs hiding   (Endpoint)
 import           Text.Printf
 import           Type.Reflection
+import qualified Data.List.NonEmpty    as NE
 import qualified Data.Text             as T
 import qualified Data.Text.Lazy        as TL
 import qualified Network.HTTP.Types    as HTTP
@@ -47,11 +51,11 @@ _testStruct = note "test program" $ hello `branch` (greetDelete <> greetPost <> 
   where
     hello       = "hello"
               $:> "the hello"
-            `note` Arg "name" "name" "<name>" (str @String)
-              #:> Opt "capital" "capital" "BOOL" orSwitch
+           `note` Arg "name" "name" "<name>" (str @String)
+              #:> Opt "capital" "capital" "BOOL" (NE.nonEmpty ["alice","bob","carol"]) orSwitch
               ?:> endpoint HTTP.methodGet (,)
     greetPost   = "greet"
-              $:> defaultParseBody (str @String)
+              $:> parseBody @String
               %:> "post greet"
             `note` endpoint HTTP.methodPost (map toUpper)
     greetDelete = "greet"
@@ -64,6 +68,11 @@ _testStruct = note "test program" $ hello `branch` (greetDelete <> greetPost <> 
            #:> endpoint HTTP.methodGet reverse
 
 
+-- | Typeclass defining how each API combinator influences how a server can
+-- be interacted with using command line options.
+--
+-- Unless you are adding new combinators to be used with APIs, you can
+-- ignore this class.
 class HasCLI m api where
     type CLI m api
 
@@ -72,7 +81,7 @@ class HasCLI m api where
         -> Proxy api
         -> PStruct (Request -> CLI m api)
 
--- | 'EmptyAPI' will always fail.
+-- | 'EmptyAPI' will always fail to parse.
 instance HasCLI m EmptyAPI where
     type CLI m EmptyAPI = EmptyClient
     clientParser_ _ _ = mempty
@@ -114,7 +123,11 @@ instance ( FromHttpApiData a
         capType = show $ typeRep @a
         DocCapture{..} = toCapture (Proxy @(Capture sym a))
 
--- | Query parameters are interpreted as command line options
+-- | Query parameters are interpreted as command line options.
+--
+-- 'QueryParam'' arguments are associated with the action at their
+-- endpoint.  After entering all path components and positional arguments,
+-- the parser library will begin asking for arguments.
 instance ( KnownSymbol sym
          , FromHttpApiData a
          , ToHttpApiData a
@@ -134,20 +147,27 @@ instance ( KnownSymbol sym
         opt :: Opt (RequiredArgument mods a)
         opt = Opt
           { optName = pName
-          , optDesc = printf "%s (%s)" _paramDesc pType
+          , optDesc = printf "%s (%s)" _paramDesc valSpec
           , optMeta = map toUpper pType
+          , optVals = NE.nonEmpty _paramValues
           , optRead = case sbool @(FoldRequired mods) of
               STrue  -> orRequired r
               SFalse -> orOptional r
           }
         r     = eitherReader $ first T.unpack . parseQueryParam @a . T.pack
         pType = show $ typeRep @a
+        valSpec
+          | null _paramValues = pType
+          | otherwise         = "options: " ++ intercalate ", " _paramValues
         pName = symbolVal (Proxy @sym)
         DocQueryParam{..} = toParam (Proxy @(QueryParam' mods sym a))
         -- TODO: experiment with more detailed help doc
-        -- also, we can offer completion with values
 
--- | Query flags are interpreted as command line flags/switches
+-- | Query flags are interpreted as command line flags/switches.
+--
+-- 'QueryFlag' arguments are associated with the action at their endpoint.
+-- After entering all path components and positional arguments, the parser
+-- library will begin asking for arguments.
 instance ( KnownSymbol sym
          , ToParam (QueryFlag sym)
          , HasCLI m api
@@ -164,22 +184,24 @@ instance ( KnownSymbol sym
           { optName = pName
           , optDesc = _paramDesc
           , optMeta = printf "<%s>" pName
+          , optVals = NE.nonEmpty _paramValues
           , optRead = orSwitch
           }
         pName = symbolVal (Proxy @sym)
         DocQueryParam{..} = toParam (Proxy @(QueryFlag sym))
 
+-- | A helper class for defining directly how to parse request bodies.
+-- This allows more complex parsing of bodies.
 class ParseBody a where
     parseBody :: Parser a
 
     default parseBody :: (Typeable a, Read a) => Parser a
-    parseBody = defaultParseBody auto
+    parseBody = defaultParseBody (show (typeRep @a)) auto
 
--- | Request body requirements are interpreted using 'ParseBody'.  This
--- allows for more complicated parsing systems.
+-- | Request body requirements are interpreted using 'ParseBody'.
 --
--- Note that both parsers will be "run" if more than one 'ReqBody' is in
--- an API endpoint, but only the final one will be used.
+-- Note if more than one 'ReqBody' is in an API endpoint, both parsers will
+-- be "run", but only the final one will be used.
 instance ( MimeRender ct a
          , ParseBody a
          , HasCLI m api
@@ -192,12 +214,24 @@ instance ( MimeRender ct a
         addBody b = setRequestBodyLBS (mimeRender ctProxy b) (contentType ctProxy)
     -- TODO: use tosample to provide samples?
 
+-- | Final actions are the result of specifying all necessary command line
+-- positional arguments.
+--
+-- All command line options are associated with the final action at the end
+-- of their endpoint/path.  They cannot be entered in "before" you arrive
+-- at your final endpoint.
+--
+-- If more than one action (under a different method) exists
+-- under the same endpoint/path, the method (@GET@, @POST@, etc.) will be
+-- treated as an extra final command.  After that, you may begin entering
+-- in options.
 instance ( HasClient m (Verb method status cts' a)
          , ReflectMethod method
          ) => HasCLI m (Verb method status cts' a) where
     type CLI m (Verb method status cts' a) = Client m (Verb method status cts' a)
     clientParser_ pm pa = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
 
+-- | Create a structure for a command line parser.
 clientPStruct
     :: HasCLI m api
     => Proxy api
@@ -205,31 +239,40 @@ clientPStruct
     -> PStruct (CLI m api)
 clientPStruct pa pm = ($ defaultRequest) <$> clientParser_ pm pa
 
+-- | Parse a servant client; the result can be run.  A good choice of @m@
+-- is 'ClientM'.
+--
+-- It takes options on how the top-level prompt is displayed when given
+-- @"--help"@; it can be useful for adding a header or program description.
+-- Otherwise, just use 'mempty'.
 parseClient
-    :: HasCLI ClientM api
+    :: HasCLI m api
     => Proxy api
-    -> IO (CLI ClientM api)
-parseClient p = execParser . structParser $ clientPStruct p (Proxy @ClientM)
+    -> Proxy m
+    -> InfoMod (CLI m api)
+    -> IO (CLI m api)
+parseClient pa pm im = execParser . flip structParser im $ clientPStruct pa pm
 
 -- TODO: use some meta var type instead of Typeable
-defaultParseBody :: forall a. Typeable a => ReadM a -> Parser a
-defaultParseBody r = option r
-    ( metavar (map toUpper tp)
+defaultParseBody
+    :: String       -- ^ type specification
+    -> ReadM a      -- ^ parser
+    -> Parser a
+defaultParseBody mv r = option r
+    ( metavar (printf "<%s>" (map toLower mv))
    <> long "data"
    <> short 'd'
-   <> help (printf "Request body (%s)" tp)
+   <> help (printf "Request body (%s)" mv)
     )
-  where
-    tp = show (typeRep @a)
 
 instance ParseBody String where
-    parseBody = defaultParseBody str
+    parseBody = defaultParseBody "Text" str
 
 instance ParseBody T.Text where
-    parseBody = defaultParseBody str
+    parseBody = defaultParseBody "Text" str
 
 instance ParseBody TL.Text where
-    parseBody = defaultParseBody str
+    parseBody = defaultParseBody "Text" str
 
 instance ParseBody Int where
 instance ParseBody Integer where

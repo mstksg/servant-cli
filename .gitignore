@@ -1,3 +1,6 @@
 .stack-work/
 servant-cli.cabal
+example/greet
+example/greet.hi
+example/greet.o
 *~

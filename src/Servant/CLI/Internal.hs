@@ -30,7 +30,7 @@ import           Servant.API.Modifiers
 import           Servant.CLI.Structure
 import           Servant.Client
 import           Servant.Client.Core
-import           Servant.Docs hiding   (Endpoint)
+import           Servant.Docs hiding   (Endpoint, Response)
 import           Text.Printf
 import           Type.Reflection
 import qualified Data.CaseInsensitive  as CI
@@ -271,21 +271,27 @@ instance HasCLI m api => HasCLI m (HttpVersion :> api) where
 -- | 'Summary' is displayed during @--help@ when it is reached while
 -- navigating down subcommands.
 instance (KnownSymbol desc, HasCLI m api) => HasCLI m (Summary desc :> api) where
-  type CLI m (Summary desc :> api) = CLI m api
+    type CLI m (Summary desc :> api) = CLI m api
 
-  clientPStruct_ pm _ = note (symbolVal (Proxy @desc))
-                      $ clientPStruct_ pm (Proxy :: Proxy api)
+    clientPStruct_ pm _ = note (symbolVal (Proxy @desc))
+                        $ clientPStruct_ pm (Proxy :: Proxy api)
 
 -- | 'Description' is displayed during @--help@ when it is reached while
 -- navigating down subcommands.
 instance (KnownSymbol desc, HasCLI m api) => HasCLI m (Description desc :> api) where
-  type CLI m (Description desc :> api) = CLI m api
+    type CLI m (Description desc :> api) = CLI m api
 
-  clientPStruct_ pm _ = note (symbolVal (Proxy @desc))
-                      $ clientPStruct_ pm (Proxy :: Proxy api)
+    clientPStruct_ pm _ = note (symbolVal (Proxy @desc))
+                        $ clientPStruct_ pm (Proxy :: Proxy api)
 
 
--- instance HasCLI m Raw where
+-- | Asks for method as a command line argument.  If any 'Verb' exists at
+-- the same endpoint, it can only be accessed as an extra 'RAW' subcommand
+-- (as if it had an extra path component labeled "RAW").
+instance RunClient m => HasCLI m Raw where
+    type CLI m Raw = m Response
+
+    clientPStruct_ pm pa = rawEndpoint . flip $ clientWithRoute pm pa
 
 instance HasCLI m api => HasCLI m (Vault :> api) where
     type CLI m (Vault :> api) = CLI m api

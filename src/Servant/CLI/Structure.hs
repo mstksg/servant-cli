@@ -6,6 +6,7 @@
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TupleSections     #-}
+{-# LANGUAGE TypeApplications  #-}
 {-# LANGUAGE TypeFamilies      #-}
 {-# LANGUAGE TypeOperators     #-}
 
@@ -16,13 +17,18 @@ module Servant.CLI.Structure (
   , MultiArg(..)
   , Captures
   , Endpoint(..)
+  , EndpointMap(..)
   , PStruct(..)
   , PStructF(..)
   , structParser
   , structParser_
+  -- * Combining
   , altPStruct
+  , altEPM
   , branch
-  , ($:>), (%:>), (?:>), (#:>), (##:>), note, endpoint
+  -- * Creating
+  , ($:>), (%:>), (?:>), (#:>), (##:>), note, endpoint, rawEndpoint
+  -- ** Readers
   , orRequired, orOptional, orSwitch
   ) where
 
@@ -37,11 +43,11 @@ import           Data.Functor.Foldable.TH
 import           Data.Kind
 import           Data.List.NonEmpty              (NonEmpty(..))
 import           Data.Map                        (Map)
-import           Data.Semigroup hiding           (Option(..), option, Arg(..))
+import           Data.Maybe
+import           Data.Type.Equality
 import           GHC.Generics
 import           Options.Applicative
 import           System.FilePath
-import qualified Data.ByteString                 as BS
 import qualified Data.Map                        as M
 import qualified Data.Text                       as T
 import qualified Data.Text.Encoding              as T
@@ -77,8 +83,14 @@ data Arg a = Arg
 data MultiArg :: Type -> Type where
     MultiArg :: Arg a -> MultiArg [a]
 
+data EndpointMap a = EPM
+    { epmGiven :: Map HTTP.Method (Endpoint a)
+    , epmRaw   :: Maybe (Day ((:~:) HTTP.Method) Endpoint a)
+    }
+  deriving Functor
+
 type Captures = Day Arg      PStruct
-            :+: Day MultiArg (Map HTTP.Method :.: Endpoint)
+            :+: Day MultiArg EndpointMap
 
 -- | Endpoint arguments and body.
 --
@@ -93,7 +105,9 @@ data PStruct a = PStruct
     { psInfo       :: [String]
     , psComponents :: Map String (PStruct a)         -- ^ path components
     , psCaptures   :: Maybe (Captures a)             -- ^ captures
-    , psEndpoints  :: Map HTTP.Method (Endpoint a)   -- ^ endpoints
+    , psEndpoints  :: EndpointMap a
+    -- , psEndpoints  :: Map HTTP.Method (Endpoint a)   -- ^ endpoints
+    -- , psRaw        :: Maybe (Day ((:~:) HTTP.Method) Endpoint a)
     }
   deriving Functor
 
@@ -103,9 +117,6 @@ makeBaseFunctor ''PStruct
 f |+| g = \case
     L1 x -> f x
     R1 y -> g y
-
-mapInnerComp :: Functor f => (g a -> g b) -> (f :.: g) a -> (f :.: g) b
-mapInnerComp f (Comp1 x) = Comp1 (fmap f x)
 
 -- | Convert a 'PStruct' into a command line argument parser, from the
 -- /optparse-applicative/ library.  It can be run with 'execParser'.
@@ -129,19 +140,22 @@ structParser_
 structParser_ = cata go
   where
     go :: PStructF x (Bool -> [String] -> InfoMod x -> ParserInfo x) -> Bool -> [String] -> InfoMod x -> ParserInfo x
-    go (PStructF ns cs c eps) toHelp p im = info ((subp <|> cap <|> ep) <**> mkHelp) $
+    go PStructF{..} toHelp p im = info ((subp <|> cap <|> ep) <**> mkHelp) $
            fullDesc
         <> header (joinPath p)
-        <> progDescDoc (Just (O.vcat . map O.string $ ns'))
+        <> progDescDoc (Just (O.vcat . map O.string $ ns))
         <> im
       where
-        (Any anySubs, subs) = M.foldMapWithKey (mkCmd p) $ cs
+        subs = M.foldMapWithKey (mkCmd p) psComponentsF
         subp
-          | anySubs   = subparser subs
-          | otherwise = empty
-        (nsc, cap) = maybe ([], empty) (mkArg p |+| (([],) . mkArgs)) c
-        ep         = methodPicker eps
-        ns' = ns ++ nsc
+          | M.null psComponentsF = empty
+          | otherwise            = subparser $ subs <> metavar "COMPONENT"
+        (nsc, cap) = maybe ([], empty) (mkArg p |+| (([],) . mkArgs)) psCapturesF
+        ep         = methodPicker psEndpointsF
+        -- rawp
+        --   | M.null psEndpointsF = maybe empty mkRaw psRawF
+        --   | otherwise           = empty
+        ns         = psInfoF ++ nsc
         mkHelp
           | toHelp    = helper
           | otherwise = pure id
@@ -149,16 +163,16 @@ structParser_ = cata go
         :: [String]
         -> String
         -> (Bool -> [String] -> InfoMod x -> ParserInfo x)
-        -> (Any, Mod CommandFields x)
-    mkCmd ps c p = (Any True, command c (p True (ps ++ [c]) mempty))
+        -> Mod CommandFields x
+    mkCmd ps c p = command c (p True (ps ++ [c]) mempty)
     mkArg :: [String] -> Day Arg PStruct x -> ([String], Parser x)
     mkArg ps (Day a p f) =
           ( []
           , f <$> argParser a
               <*> infoParser (structParser_ p False (ps ++ [':' : argName a]) mempty)
           )
-    mkArgs :: Day MultiArg (Map HTTP.Method :.: Endpoint) x -> Parser x
-    mkArgs (Day (MultiArg a) (Comp1 ps) f) =
+    mkArgs :: Day MultiArg EndpointMap x -> Parser x
+    mkArgs (Day (MultiArg a) ps f) =
             flip f <$> methodPicker ps
                    <*> many (argParser a)
     argParser :: Arg x -> Parser x
@@ -175,37 +189,69 @@ structParser_ = cata go
             <> help optDesc
             <> metavar optMeta
             <> foldMap (completeWith . toList) optVals
-    methodPicker :: Map HTTP.Method (Endpoint x) -> Parser x
-    methodPicker eps = case M.minView epMap of
-        Nothing       -> empty
+    methodPicker :: EndpointMap x -> Parser x
+    methodPicker (EPM eps rw) = case M.minView epMap of
+        Nothing       -> maybe empty mkRaw rw
         Just (m0, ms)
-          | M.null ms -> m0
+          | M.null ms && isNothing rw -> m0
           | otherwise -> subparser $ M.foldMapWithKey pickMethod epMap
+                                  <> foldMap mkRawCommand rw
+                                  <> metavar "METHOD"
       where
         epMap = mkEndpoint <$> eps
     mkEndpoint :: Endpoint x -> Parser x
     mkEndpoint (Endpoint (Day o b f)) = f <$> runAp mkOpt o
                                           <*> b
-    pickMethod :: BS.ByteString -> Parser x -> Mod CommandFields x
+    pickMethod :: HTTP.Method -> Parser x -> Mod CommandFields x
     pickMethod m p = command (T.unpack . T.decodeUtf8 $ m) $ info (p <**> helper) mempty
+    mkRaw :: Day ((:~:) HTTP.Method) Endpoint x -> Parser x
+    mkRaw (Day Refl e f) = flip f <$> mkEndpoint e <*> o
+      where
+        o = strOption @HTTP.Method $
+              long "method"
+           <> help "method for raw request (GET, POST, etc.)"
+           <> metavar "METHOD"
+           <> completeWith (show <$> [HTTP.GET ..])
+    mkRawCommand :: Day ((:~:) HTTP.Method) Endpoint x -> Mod CommandFields x
+    mkRawCommand d = command "RAW" $ info (mkRaw d <**> helper) mempty
+
+instance Semigroup (EndpointMap a) where
+    (<>) = altEPM
+
+instance Monoid (EndpointMap a) where
+    mempty = EPM M.empty Nothing
+
+-- | Combine two 'EndpointMap's, preferring the left hand side for
+-- conflicts.  If the left hand has a raw endpoint, the right hand's
+-- endpoints are ignored.
+altEPM :: EndpointMap a -> EndpointMap a -> EndpointMap a
+altEPM (EPM e1 r1) (EPM e2 r2) = EPM e3 r3
+  where
+    e3  = case r1 of
+      Just _  -> e1
+      Nothing -> M.unionWith const e1 e2
+    r3  = r1 <|> r2
 
 -- | Combine two 'PStruct's, preferring the left hand side for conflicts.
 -- If the left hand has a capture, the right hand's components are ignored.
+-- If the left hand has a raw endpoint, the right hand's endpoints are
+-- ignored.
 altPStruct :: PStruct a -> PStruct a -> PStruct a
-altPStruct (PStruct ns1 cs1 c1 ep1) (PStruct ns2 cs2 c2 ep2) = PStruct ns3 cs3 c3 ep3
+altPStruct (PStruct ns1 cs1 c1 ep1) (PStruct ns2 cs2 c2 ep2) =
+    PStruct ns3 cs3 c3 ep3
   where
     ns3 = ns1 ++ ns2    -- ??
     cs3 = case c1 of
       Just _  -> cs1
       Nothing -> M.unionWith altPStruct cs1 cs2
     c3  = c1 <|> c2
-    ep3 = M.unionWith const ep1 ep2
+    ep3 = ep1 <> ep2
 
 instance Semigroup (PStruct a) where
     (<>) = altPStruct
 
 instance Monoid (PStruct a) where
-    mempty = PStruct [] M.empty Nothing M.empty
+    mempty = PStruct [] M.empty Nothing mempty
 
 branch :: PStruct a -> PStruct b -> PStruct (Either a b)
 branch x y = (Left <$> x) `altPStruct` (Right <$> y)
@@ -228,13 +274,29 @@ o ?:> PStruct ns cs c ep = PStruct ns cs' c' ep'
           in  L1 $ Day a (o ?:> (f' <$> p)) (&)
         R1 (Day a p f) ->
           let f' x y z = f z x y
-          in  R1 $ Day a (addEndpointOpt o `mapInnerComp` (f' <$> p)) (&)
-    ep' = addEndpointOpt o <$> ep
+          in  R1 $ Day a (addEPMOpt o (f' <$> p)) (&)
+    ep' = addEPMOpt o ep
 infixr 4 ?:>
 
 addEndpointOpt :: Opt a -> Endpoint (a -> b) -> Endpoint b
 addEndpointOpt o (Endpoint (Day eo eb ef)) =
     Endpoint (Day ((,) <$> liftAp o <*> eo) eb $ \(x, y) z -> ef y z x)
+
+addEPMOpt :: Opt a -> EndpointMap (a -> b) -> EndpointMap b
+addEPMOpt o (EPM e r) = EPM e' r'
+  where
+    e' = addEndpointOpt o <$> e
+    r' = r <&> \(Day rr re rf) ->
+          let f' x y z = rf z x y
+          in  Day rr (addEndpointOpt o (f' <$> re)) (&)
+
+-- addEPMBody b (EPM e r) = EPM e' r'
+--   where
+--     e' = addEndpointBody b <$> e
+--     r' = r <&> \(Day rr re rf) ->
+--           let f' x y z = rf z x y
+--           in  Day rr (addEndpointBody b (f' <$> re)) (&)
+
 
 -- | Add a note.
 note :: String -> PStruct a -> PStruct a
@@ -248,7 +310,9 @@ infixr 4 #:>
 
 -- | Add a repeating argument parser.
 (##:>) :: Arg a -> PStruct ([a] -> b) -> PStruct b
-a ##:> p = mempty { psCaptures = Just (R1 (Day (MultiArg a) (Comp1 (psEndpoints p)) (&))) }
+a ##:> p = mempty
+    { psCaptures = Just (R1 (Day (MultiArg a) (psEndpoints p) (&)))
+    }
 infixr 4 ##:>
 
 -- | Add a request body to all endpoints.  NOTE!!!!! UNDEFINED BEHAVIOR IF
@@ -263,18 +327,33 @@ b %:> PStruct ns cs c ep = PStruct ns cs' c' ep'
           in  L1 $ Day a (b             %:> (f' <$> p)) (&)
         R1 (Day a p f) ->
           let f' x y z = f z x y
-          in  R1 $ Day a (addEndpointBody b `mapInnerComp` (f' <$> p)) (&)
-    ep' = addEndpointBody b <$> ep
+          in  R1 $ Day a (addEPMBody b (f' <$> p)) (&)
+    ep' = addEPMBody b ep
 infixr 4 %:>
 
 addEndpointBody :: Parser a -> Endpoint (a -> b) -> Endpoint b
 addEndpointBody b (Endpoint (Day eo eb ef)) =
     Endpoint (Day eo (liftA2 (,) b eb) $ \x (y, z) -> ef x z y)
 
+addEPMBody :: Parser a -> EndpointMap (a -> b) -> EndpointMap b
+addEPMBody b (EPM e r) = EPM e' r'
+  where
+    e' = addEndpointBody b <$> e
+    r' = r <&> \(Day rr re rf) ->
+          let f' x y z = rf z x y
+          in  Day rr (addEndpointBody b (f' <$> re)) (&)
 
 -- | Create an endpoint action.
 endpoint :: HTTP.Method -> a -> PStruct a
-endpoint m x = mempty { psEndpoints = M.singleton m (Endpoint (pure x)) }
+endpoint m x = mempty
+    { psEndpoints = EPM (M.singleton m (Endpoint (pure x))) Nothing
+    }
+
+-- | Create a raw endpoint.
+rawEndpoint :: (HTTP.Method -> a) -> PStruct a
+rawEndpoint f = mempty
+    { psEndpoints = EPM M.empty (Just (Day Refl (Endpoint (pure ())) (\m _ -> f m)))
+    }
 
 -- | Helper to lift a 'ReadM' into something that can be used with 'optRead'.
 orRequired :: ReadM a -> Coyoneda OptRead a

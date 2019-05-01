@@ -44,6 +44,7 @@ import           Control.Applicative.Lift
 import           Control.Monad.Free
 import           Data.Bifunctor
 import           Data.Char
+import           Data.Either
 import           Data.Function
 import           Data.Functor
 import           Data.Functor.Coyoneda
@@ -117,6 +118,8 @@ type Captures = Day Arg      PStruct
             :+: Day MultiArg (Map HTTP.Method :.: Endpoint)
 
 -- | Endpoint arguments and body.
+--
+-- TODO: add things like status etc.
 data Endpoint a = Endpoint
     { epStruct :: Day (Ap Opt) Parser a }
   deriving Functor
@@ -296,16 +299,6 @@ orOptional = liftCoyoneda . OROptional
 orSwitch :: Coyoneda OptRead Bool
 orSwitch = liftCoyoneda ORSwitch
 
-defaultParseBody :: forall a. Typeable a => ReadM a -> Parser a
-defaultParseBody r = option r
-    ( metavar (map toUpper tp)
-   <> long "data"
-   <> short 'd'
-   <> help (printf "Request body (%s)" tp)
-    )
-  where
-    tp = show (typeRep @a)
-
 testStruct :: PStruct (Either (Bool, String) String)
 testStruct = note "test program" $ hello `branch` (greetDelete <> greetPost <> whatever)
   where
@@ -327,7 +320,7 @@ testStruct = note "test program" $ hello `branch` (greetDelete <> greetPost <> w
            $:> Arg "name" "name" "<name>" (str @String)
            #:> endpoint HTTP.methodGet reverse
 
-class (HasDocs api, HasClient m api) => HasCLI m api where
+class HasCLI m api where
     type CLI m api
 
     clientParser_
@@ -336,7 +329,7 @@ class (HasDocs api, HasClient m api) => HasCLI m api where
         -> PStruct (Request -> CLI m api)
 
 -- | 'EmptyAPI' will always fail.
-instance HasClient m EmptyAPI => HasCLI m EmptyAPI where
+instance HasCLI m EmptyAPI where
     type CLI m EmptyAPI = EmptyClient
     clientParser_ _ _ = mempty
 
@@ -357,8 +350,7 @@ instance (KnownSymbol path, HasCLI m api) => HasCLI m (path :> api) where
         pathstr = symbolVal (Proxy @path)
 
 -- | A 'Capture' is interpreted as a positional required command line argument.
-instance ( KnownSymbol sym
-         , FromHttpApiData a
+instance ( FromHttpApiData a
          , ToHttpApiData a
          , Typeable a
          , ToCapture (Capture sym a)
@@ -378,6 +370,7 @@ instance ( KnownSymbol sym
         capType = show $ typeRep @a
         DocCapture{..} = toCapture (Proxy @(Capture sym a))
 
+-- | Query parameters are interpreted as command line options
 instance ( KnownSymbol sym
          , FromHttpApiData a
          , ToHttpApiData a
@@ -387,152 +380,111 @@ instance ( KnownSymbol sym
          , HasCLI m api
          ) => HasCLI m (QueryParam' mods sym a :> api) where
     type CLI m (QueryParam' mods sym a :> api) = CLI m api
-    clientParser_ pm _ = undefined
-    -- clientParser_ pm _ = case sbool @(FoldRequired' 'False mods) of
-    --     STrue  -> opt (orRequired r) ?:>
-    --         (fmap . flip) (lmap . addParam) (clientParser_ pm (Proxy @api))
-        -- SFalse -> undefined
-    -- opt _ ?:> _
-    -- clientParser_ pm _ api = BindP opt' $ clientParser_ pm (Proxy @api) . api
+    clientParser_ pm _ = opt ?:>
+        (fmap . flip) (lmap . addParam) (clientParser_ pm (Proxy @api))
       where
-        -- addParam ::
-        opt oR = Opt
+        addParam :: RequiredArgument mods a -> Request -> Request
+        addParam = foldRequiredArgument (Proxy @mods) add (maybe id add)
+        add :: a -> Request -> Request
+        add param = appendToQueryString (T.pack pName) (Just (toQueryParam param))
+        opt :: Opt (RequiredArgument mods a)
+        opt = Opt
           { optName = pName
           , optDesc = printf "%s (%s)" _paramDesc pType
           , optMeta = map toUpper pType
-          , optRead = oR
+          , optRead = case sbool @(FoldRequired mods) of
+              STrue  -> orRequired r
+              SFalse -> orOptional r
           }
-        -- um is this right? should there be a better way?
-        r = eitherReader $ first T.unpack . parseUrlPiece @a . T.pack
--- -- | Query parameters are interpreted as options
--- data Opt a = Opt
---     { optName :: String
---     , optDesc :: String
---     , optMeta :: String
---     , optRead :: Coyoneda OptRead a
---     }
---   deriving Functor
-
-        -- opt :: Parser a
-        -- opt = option (eitherReader (first T.unpack . parseUrlPiece @a . T.pack))
-        --         ( metavar (map toUpper pType)
-        --        <> long pName
-        --        <> help (printf "%s (%s)" _paramDesc pType)
-        --         )
-        -- opt' :: Parser (If (FoldRequired' 'False mods) a (Maybe a))
-        -- opt' = case sbool @(FoldRequired' 'False mods) of
-        --   STrue  -> opt
-        --   SFalse -> optional opt
-        pType             = show $ typeRep @a
-        pName             = symbolVal (Proxy @sym)
+        r     = eitherReader $ first T.unpack . parseQueryParam @a . T.pack
+        pType = show $ typeRep @a
+        pName = symbolVal (Proxy @sym)
         DocQueryParam{..} = toParam (Proxy @(QueryParam' mods sym a))
         -- TODO: experiment with more detailed help doc
         -- also, we can offer completion with values
 
--- instance ( KnownSymbol sym
---          , ToParam (QueryFlag sym)
---          , HasCLI m api
---          ) => HasCLI m (QueryFlag sym :> api) where
---     type CLI m (QueryFlag sym :> api) = CLI m api
---     clientParser_ pm _ api = BindP opt $ clientParser_ pm (Proxy @api) . api
---       where
---         opt :: Parser Bool
---         opt = switch ( long (symbolVal (Proxy @sym)) )
+-- | Query flags are interpreted as command line flags/switches
+instance ( KnownSymbol sym
+         , ToParam (QueryFlag sym)
+         , HasCLI m api
+         ) => HasCLI m (QueryFlag sym :> api) where
+    type CLI m (QueryFlag sym :> api) = CLI m api
+    clientParser_ pm _ = opt ?:>
+        (fmap . flip) (lmap . addParam) (clientParser_ pm (Proxy @api))
+      where
+        addParam :: Bool -> Request -> Request
+        addParam = \case
+          True  -> appendToQueryString (T.pack pName) Nothing
+          False -> id
+        opt = Opt
+          { optName = pName
+          , optDesc = _paramDesc
+          , optMeta = printf "<%s>" pName
+          , optRead = orSwitch
+          }
+        pName = symbolVal (Proxy @sym)
+        DocQueryParam{..} = toParam (Proxy @(QueryFlag sym))
 
--- class ParseBody a where
---     parseBody :: Parser a
+class ParseBody a where
+    parseBody :: Parser a
 
---     default parseBody :: (Typeable a, Read a) => Parser a
---     parseBody = defaultParseBody auto
+    default parseBody :: (Typeable a, Read a) => Parser a
+    parseBody = defaultParseBody auto
 
--- instance ( MimeRender ct a
---          , ParseBody a
---          , ToSample a
---          , AllMimeRender (ct ': cts) a
---          , HasCLI m api
---          ) => HasCLI m (ReqBody' mods (ct ': cts) a :> api) where
---     type CLI m (ReqBody' mods (ct ': cts) a :> api) = CLI m api
---     clientParser_ pm _ api =
---         BindP parseBody $
---           clientParser_ pm (Proxy @api) . api
---     -- TODO: use tosample to provide samples?
+-- | Request body requirements are interpreted using 'ParseBody'.  This
+-- allows for more complicated parsing systems.
+instance ( MimeRender ct a
+         , ParseBody a
+         , HasCLI m api
+         ) => HasCLI m (ReqBody' mods (ct ': cts) a :> api) where
+    type CLI m (ReqBody' mods (ct ': cts) a :> api) = CLI m api
+    clientParser_ pm _ = parseBody @a %:>
+        (fmap . flip) (lmap . addBody) (clientParser_ pm (Proxy @api))
+      where
+        ctProxy = Proxy @ct
+        addBody b = setRequestBodyLBS (mimeRender ctProxy b) (contentType ctProxy)
+    -- TODO: use tosample to provide samples?
 
--- -- TODO: we have a problem here, how to distinguish DELETE and POST
--- -- requests with the same name.
--- instance {-# OVERLAPPABLE #-}
---     -- Note [Non-Empty Content Types]
---     ( RunClient m, MimeUnrender ct a, ReflectMethod method, cts' ~ (ct ': cts)
---     , ToSample a
---     , AllMimeRender (ct ': cts) a
---     , KnownNat status
---     ) => HasCLI m (Verb method status cts' a) where
---     type CLI m (Verb method status cts' a) = a
---     clientParser_ _ _ = pure
+instance ( HasClient m (Verb method status cts' a)
+         , ReflectMethod method
+         ) => HasCLI m (Verb method status cts' a) where
+    type CLI m (Verb method status cts' a) = Client m (Verb method status cts' a)
+    clientParser_ pm pa = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
 
--- instance {-# OVERLAPPING #-}
---     ( RunClient m, ReflectMethod method
---     , HasDocs (Verb method status cts NoContent)
---     ) => HasCLI m (Verb method status cts NoContent) where
---     type CLI m (Verb method status cts NoContent) = NoContent
---     clientParser_ _ _ = pure
+clientPStruct
+    :: HasCLI m api
+    => Proxy api
+    -> Proxy m
+    -> PStruct (CLI m api)
+clientPStruct pa pm = ($ defaultRequest) <$> clientParser_ pm pa
 
--- instance {-# OVERLAPPING #-}
---     -- Note [Non-Empty Content Types]
---     ( RunClient m, MimeUnrender ct a, BuildHeadersTo ls
---     , ReflectMethod method, cts' ~ (ct ': cts)
---     , ToSample a
---     , AllMimeRender (ct ': cts) a
---     , KnownNat status
---     , AllHeaderSamples ls
---     , GetHeaders (HList ls)
---     ) => HasCLI m (Verb method status cts' (Headers ls a)) where
---     type CLI m (Verb method status cts' (Headers ls a)) = Headers ls a
---     clientParser_ _ _ = pure
+parseClient
+    :: HasCLI ClientM api
+    => Proxy api
+    -> IO (CLI ClientM api)
+parseClient p = execParser . structParser $ clientPStruct p (Proxy @ClientM)
 
--- instance {-# OVERLAPPING #-}
---     ( RunClient m, BuildHeadersTo ls, ReflectMethod method
---     , HasDocs (Verb method status cts (Headers ls NoContent))
---     ) => HasCLI m (Verb method status cts (Headers ls NoContent)) where
---     type CLI m (Verb method status cts (Headers ls NoContent))
---       = Headers ls NoContent
---     clientParser_ _ _ = pure
+-- TODO: use some meta var type instead of Typeable
+defaultParseBody :: forall a. Typeable a => ReadM a -> Parser a
+defaultParseBody r = option r
+    ( metavar (map toUpper tp)
+   <> long "data"
+   <> short 'd'
+   <> help (printf "Request body (%s)" tp)
+    )
+  where
+    tp = show (typeRep @a)
 
--- clientParser
---     :: HasCLI m api
---     => Proxy api
---     -> Proxy m
---     -> Parser (m (CLI m api))
--- clientParser papi pm = clientParser_ pm papi (clientIn papi pm)
+instance ParseBody String where
+    parseBody = defaultParseBody str
 
--- parseClient
---     :: HasCLI ClientM api
---     => Proxy api
---     -> IO (ClientM (CLI ClientM api))
--- parseClient p = execParser $ info (clientParser p (Proxy @ClientM) <**> helper) mempty
+instance ParseBody T.Text where
+    parseBody = defaultParseBody str
 
+instance ParseBody TL.Text where
+    parseBody = defaultParseBody str
 
-
-
--- defaultParseBody :: forall a. Typeable a => ReadM a -> Parser a
--- defaultParseBody r = option r
---     ( metavar (map toUpper tp)
---    <> long "data"
---    <> short 'd'
---    <> help (printf "Request body (%s)" tp)
---     )
---   where
---     tp = show (typeRep @a)
-
--- instance ParseBody String where
---     parseBody = defaultParseBody str
-
--- instance ParseBody T.Text where
---     parseBody = defaultParseBody str
-
--- instance ParseBody TL.Text where
---     parseBody = defaultParseBody str
-
--- instance ParseBody Int where
--- instance ParseBody Integer where
--- instance ParseBody Float where
--- instance ParseBody Double where
+instance ParseBody Int where
+instance ParseBody Integer where
+instance ParseBody Float where
+instance ParseBody Double where

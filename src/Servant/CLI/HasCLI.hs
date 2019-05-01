@@ -27,7 +27,6 @@ import           Servant.API hiding    (addHeader)
 import           Servant.API.Modifiers
 import           Servant.CLI.ParseBody
 import           Servant.CLI.Structure
-import           Servant.Client
 import           Servant.Client.Core
 import           Servant.Docs hiding   (Endpoint, Response)
 import           Text.Printf
@@ -44,8 +43,15 @@ import qualified Data.Text.Encoding    as T
 -- Unless you are adding new combinators to be used with APIs, you can
 -- ignore this class.
 class HasCLI m api where
+    -- | The type of the API client action that the command line parser
+    -- will return.  In most cases, this will be the return type of the
+    -- final endpoint action, or else an 'Either' between two branches.
     type CLI (m :: Type -> Type) (api :: Type) :: Type
 
+    -- | Generate a 'PStruct' showing how to modify a 'Request' and perform
+    -- an action, given an API and underlying monad.  Only meant for
+    -- internal use; should be used through 'Servant.CLI.clientPStruct'
+    -- instead.
     clientPStruct_
         :: Proxy m
         -> Proxy api
@@ -307,8 +313,8 @@ instance (KnownSymbol desc, HasCLI m api) => HasCLI m (Description desc :> api) 
 
 
 -- | Asks for method as a command line argument.  If any 'Verb' exists at
--- the same endpoint, it can only be accessed as an extra 'RAW' subcommand
--- (as if it had an extra path component labeled "RAW").
+-- the same endpoint, it can only be accessed as an extra @RAW@ subcommand
+-- (as if it had an extra path component labeled @"RAW"@).
 instance RunClient m => HasCLI m Raw where
     type CLI m Raw = m Response
 

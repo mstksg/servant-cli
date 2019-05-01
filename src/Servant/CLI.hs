@@ -14,9 +14,11 @@
 module Servant.CLI (
     parseClient
   , HasCLI, CLI
+  -- * Lower-level
   , clientPStruct
+  , structParser
   -- * Re-export
-  , ParseBody(..)
+  , ParseBody(..), defaultParseBody
   , ToCapture(..), DocCapture(..)
   , ToParam(..), DocQueryParam(..)
   ) where
@@ -32,21 +34,21 @@ import           Servant.Docs
 -- | Create a structure for a command line parser.
 clientPStruct
     :: HasCLI m api
-    => Proxy api
-    -> Proxy m
+    => Proxy api                -- ^ API
+    -> Proxy m                  -- ^ Client monad
     -> PStruct (CLI m api)
 clientPStruct pa pm = ($ defaultRequest) <$> clientPStruct_ pm pa
 
 -- | Parse a servant client; the result can be run.  A good choice of @m@
--- is 'ClientM'.
+-- is 'Servant.Client.ClientM'.
 --
 -- It takes options on how the top-level prompt is displayed when given
 -- @"--help"@; it can be useful for adding a header or program description.
 -- Otherwise, just use 'mempty'.
 parseClient
     :: HasCLI m api
-    => Proxy api
-    -> Proxy m
-    -> InfoMod (CLI m api)
+    => Proxy api                -- ^ API
+    -> Proxy m                  -- ^ Client monad
+    -> InfoMod (CLI m api)      -- ^ Options for top-level display
     -> IO (CLI m api)
 parseClient pa pm im = execParser . flip structParser im $ clientPStruct pa pm

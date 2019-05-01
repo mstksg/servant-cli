@@ -22,11 +22,8 @@ module Servant.CLI.Structure (
   , PStructF(..)
   , structParser
   , structParser_
-  -- * Combining
-  , altPStruct
-  , altEPM
-  , branch
   -- * Creating
+  , branch
   , ($:>), (%:>), (?:>), (#:>), (##:>), note, endpoint, rawEndpoint
   -- ** Readers
   , orRequired, orOptional, orSwitch
@@ -80,21 +77,25 @@ data Arg a = Arg
     }
   deriving Functor
 
+-- | Interpret an 'Arg' as something that can be given repeatedly an
+-- arbitrary number of times.
 data MultiArg :: Type -> Type where
     MultiArg :: Arg a -> MultiArg [a]
 
+-- | A map of endpoints associated with methods, paired with an optional
+-- "raw" endpoint.
 data EndpointMap a = EPM
     { epmGiven :: Map HTTP.Method (Endpoint a)
     , epmRaw   :: Maybe (Day ((:~:) HTTP.Method) Endpoint a)
     }
   deriving Functor
 
+-- | Captures can be a single capture leading to the next level, or
+-- a multi-capture leading to an endpoint action.
 type Captures = Day Arg      PStruct
             :+: Day MultiArg EndpointMap
 
 -- | Endpoint arguments and body.
---
--- TODO: add things like status etc.
 data Endpoint a = Endpoint
     { epStruct :: Day (Ap Opt) Parser a }
   deriving Functor
@@ -214,15 +215,15 @@ structParser_ = cata go
     mkRawCommand :: Day ((:~:) HTTP.Method) Endpoint x -> Mod CommandFields x
     mkRawCommand d = command "RAW" $ info (mkRaw d <**> helper) mempty
 
+-- | Combine two 'EndpointMap's, preferring the left hand side for
+-- conflicts.  If the left hand has a raw endpoint, the right hand's
+-- endpoints are ignored.
 instance Semigroup (EndpointMap a) where
     (<>) = altEPM
 
 instance Monoid (EndpointMap a) where
     mempty = EPM M.empty Nothing
 
--- | Combine two 'EndpointMap's, preferring the left hand side for
--- conflicts.  If the left hand has a raw endpoint, the right hand's
--- endpoints are ignored.
 altEPM :: EndpointMap a -> EndpointMap a -> EndpointMap a
 altEPM (EPM e1 r1) (EPM e2 r2) = EPM e3 r3
   where
@@ -231,10 +232,6 @@ altEPM (EPM e1 r1) (EPM e2 r2) = EPM e3 r3
       Nothing -> M.unionWith const e1 e2
     r3  = r1 <|> r2
 
--- | Combine two 'PStruct's, preferring the left hand side for conflicts.
--- If the left hand has a capture, the right hand's components are ignored.
--- If the left hand has a raw endpoint, the right hand's endpoints are
--- ignored.
 altPStruct :: PStruct a -> PStruct a -> PStruct a
 altPStruct (PStruct ns1 cs1 c1 ep1) (PStruct ns2 cs2 c2 ep2) =
     PStruct ns3 cs3 c3 ep3
@@ -246,12 +243,18 @@ altPStruct (PStruct ns1 cs1 c1 ep1) (PStruct ns2 cs2 c2 ep2) =
     c3  = c1 <|> c2
     ep3 = ep1 <> ep2
 
+-- | Combine two 'PStruct's, preferring the left hand side for conflicts.
+-- If the left hand has a capture, the right hand's components are ignored.
+-- If the left hand has a raw endpoint, the right hand's endpoints are
+-- ignored.
 instance Semigroup (PStruct a) where
     (<>) = altPStruct
 
 instance Monoid (PStruct a) where
     mempty = PStruct [] M.empty Nothing mempty
 
+-- | Combine two 'PStruct's in an either-or fashion, favoring the left hand
+-- side.
 branch :: PStruct a -> PStruct b -> PStruct (Either a b)
 branch x y = (Left <$> x) `altPStruct` (Right <$> y)
 

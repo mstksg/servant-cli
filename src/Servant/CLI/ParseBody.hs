@@ -22,6 +22,7 @@ class ParseBody a where
     default parseBody :: (Typeable a, Read a) => Parser a
     parseBody = defaultParseBody (show (typeRep @a)) auto
 
+-- | Default implementation that expects a @--data@ option.
 defaultParseBody
     :: String       -- ^ type specification
     -> ReadM a      -- ^ parser

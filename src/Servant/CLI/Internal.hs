@@ -33,6 +33,7 @@ import           Servant.Client.Core
 import           Servant.Docs hiding   (Endpoint, Response)
 import           Text.Printf
 import           Type.Reflection
+import qualified Data.ByteString.Lazy  as BSL
 import qualified Data.CaseInsensitive  as CI
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Text             as T
@@ -217,14 +218,38 @@ instance ( HasClient m (Verb method status cts' a)
     type CLI m (Verb method status cts' a) = Client m (Verb method status cts' a)
     clientPStruct_ pm pa = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
 
--- instance {-# OVERLAPPABLE #-}
---   ( RunStreamingClient m, MimeUnrender ct chunk, ReflectMethod method,
---     FramingUnrender framing, FromSourceIO chunk a
---   ) => HasClient m (Stream method status framing ct a) where
+instance ( RunStreamingClient m
+         , MimeUnrender ct chunk
+         , ReflectMethod method
+         , FramingUnrender framing
+         , FromSourceIO chunk a
+         ) => HasCLI m (Stream method status framing ct a) where
+    type CLI m (Stream method status framing ct a) = m a
+    clientPStruct_ pm pa = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
 
--- instance
---     ( HasClient m api, MimeRender ctype chunk, FramingRender framing, ToSourceIO chunk a
---     ) => HasClient m (StreamBody' mods framing ctype a :> api)
+-- | The final action will require a streaming source @a@ to be given.
+-- Instead of normally parsing command line arguments into an @m a@, it
+-- parses it into a @s -> m a@, awaiting a streaming source to send as
+-- body.
+instance ( ToSourceIO chunk a
+         , MimeRender ctype chunk
+         , FramingRender framing
+         , HasCLI m api
+         ) => HasCLI m (StreamBody' mods framing ctype a :> api) where
+    type CLI m (StreamBody' mods framing ctype a :> api) = a -> CLI m api
+    clientPStruct_ pm _ = addBody <$> clientPStruct_ pm (Proxy @api)
+      where
+        addBody :: (Request -> CLI m api) -> Request -> a -> CLI m api
+        addBody f r x = f
+                      . setRequestBody (RequestBodySource sourceIO) (contentType ctypeP)
+                      $ r
+          where
+            ctypeP   = Proxy @ctype
+            framingP = Proxy @framing
+            sourceIO = framingRender
+                framingP
+                (mimeRender ctypeP :: chunk -> BSL.ByteString)
+                (toSourceIO x)
 
 -- | A 'Header' in the middle of a path is interpreted as a command line
 -- argument, prefixed with "header".  For example, @'Header' "foo" 'Int'@

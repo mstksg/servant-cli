@@ -12,7 +12,7 @@
 {-# LANGUAGE UndecidableInstances  #-}
 
 module Servant.CLI (
-    HasCLI(..)
+    HasCLI, CLI
   , clientPStruct
   , parseClient
   , ParseBody(..)
@@ -37,7 +37,7 @@ clientPStruct
     => Proxy api
     -> Proxy m
     -> PStruct (CLI m api)
-clientPStruct pa pm = ($ defaultRequest) <$> clientParser_ pm pa
+clientPStruct pa pm = ($ defaultRequest) <$> clientPStruct_ pm pa
 
 -- | Parse a servant client; the result can be run.  A good choice of @m@
 -- is 'ClientM'.

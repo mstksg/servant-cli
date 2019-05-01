@@ -25,7 +25,7 @@ import           Data.Profunctor
 import           Data.Proxy
 import           GHC.TypeLits hiding   (Mod)
 import           Options.Applicative
-import           Servant.API
+import           Servant.API hiding    (addHeader)
 import           Servant.API.Modifiers
 import           Servant.CLI.Structure
 import           Servant.Client
@@ -33,8 +33,10 @@ import           Servant.Client.Core
 import           Servant.Docs hiding   (Endpoint)
 import           Text.Printf
 import           Type.Reflection
+import qualified Data.CaseInsensitive  as CI
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Text             as T
+import qualified Data.Text.Encoding    as T
 import qualified Data.Text.Lazy        as TL
 
 -- | Typeclass defining how each API combinator influences how a server can
@@ -45,7 +47,7 @@ import qualified Data.Text.Lazy        as TL
 class HasCLI m api where
     type CLI (m :: Type -> Type) (api :: Type) :: Type
 
-    clientParser_
+    clientPStruct_
         :: Proxy m
         -> Proxy api
         -> PStruct (Request -> CLI m api)
@@ -53,21 +55,21 @@ class HasCLI m api where
 -- | 'EmptyAPI' will always fail to parse.
 instance HasCLI m EmptyAPI where
     type CLI m EmptyAPI = EmptyClient
-    clientParser_ _ _ = mempty
+    clientPStruct_ _ _ = mempty
 
 -- | Using alternation with ':<|>' provides an 'Either' between the two
 -- results.
 instance (HasCLI m a, HasCLI m b) => HasCLI m (a :<|> b) where
     type CLI m (a :<|> b) = Either (CLI m a) (CLI m b)
-    clientParser_ pm _ = (fmap Left  <$> clientParser_ pm (Proxy @a))
-                      <> (fmap Right <$> clientParser_ pm (Proxy @b))
+    clientPStruct_ pm _ = (fmap Left  <$> clientPStruct_ pm (Proxy @a))
+                      <> (fmap Right <$> clientPStruct_ pm (Proxy @b))
 
 -- | A path component is interpreted as a "subcommand".
 instance (KnownSymbol path, HasCLI m api) => HasCLI m (path :> api) where
     type CLI m (path :> api) = CLI m api
-    clientParser_ pm _ = pathstr $:>
+    clientPStruct_ pm _ = pathstr $:>
         (fmap . lmap) (appendToPath (T.pack pathstr))
-                      (clientParser_ pm (Proxy @api))
+                      (clientPStruct_ pm (Proxy @api))
       where
         pathstr = symbolVal (Proxy @path)
 
@@ -79,8 +81,8 @@ instance ( FromHttpApiData a
          , HasCLI m api
          ) => HasCLI m (Capture' mods sym a :> api) where
     type CLI m (Capture' mods sym a :> api) = CLI m api
-    clientParser_ pm _ = arg #:>
-        (fmap . flip) (lmap . addCapture) (clientParser_ pm (Proxy @api))
+    clientPStruct_ pm _ = arg #:>
+        (fmap . flip) (lmap . addCapture) (clientPStruct_ pm (Proxy @api))
       where
         addCapture = appendToPath . toUrlPiece
         arg = Arg
@@ -102,8 +104,8 @@ instance ( FromHttpApiData a
          , HasCLI m api
          ) => HasCLI m (CaptureAll sym a :> api) where
     type CLI m (CaptureAll sym a :> api) = CLI m api
-    clientParser_ pm _ = arg ##:>
-        (fmap . flip) (lmap . addCapture) (clientParser_ pm (Proxy @api))
+    clientPStruct_ pm _ = arg ##:>
+        (fmap . flip) (lmap . addCapture) (clientPStruct_ pm (Proxy @api))
       where
         addCapture ps req = foldl' (flip appendToPath) req (map toUrlPiece ps)
         arg = Arg
@@ -129,8 +131,8 @@ instance ( KnownSymbol sym
          , HasCLI m api
          ) => HasCLI m (QueryParam' mods sym a :> api) where
     type CLI m (QueryParam' mods sym a :> api) = CLI m api
-    clientParser_ pm _ = opt ?:>
-        (fmap . flip) (lmap . addParam) (clientParser_ pm (Proxy @api))
+    clientPStruct_ pm _ = opt ?:>
+        (fmap . flip) (lmap . addParam) (clientPStruct_ pm (Proxy @api))
       where
         addParam :: RequiredArgument mods a -> Request -> Request
         addParam = foldRequiredArgument (Proxy @mods) add (maybe id add)
@@ -165,8 +167,8 @@ instance ( KnownSymbol sym
          , HasCLI m api
          ) => HasCLI m (QueryFlag sym :> api) where
     type CLI m (QueryFlag sym :> api) = CLI m api
-    clientParser_ pm _ = opt ?:>
-        (fmap . flip) (lmap . addParam) (clientParser_ pm (Proxy @api))
+    clientPStruct_ pm _ = opt ?:>
+        (fmap . flip) (lmap . addParam) (clientPStruct_ pm (Proxy @api))
       where
         addParam :: Bool -> Request -> Request
         addParam = \case
@@ -182,14 +184,6 @@ instance ( KnownSymbol sym
         pName = symbolVal (Proxy @sym)
         DocQueryParam{..} = toParam (Proxy @(QueryFlag sym))
 
--- | A helper class for defining directly how to parse request bodies.
--- This allows more complex parsing of bodies.
-class ParseBody a where
-    parseBody :: Parser a
-
-    default parseBody :: (Typeable a, Read a) => Parser a
-    parseBody = defaultParseBody (show (typeRep @a)) auto
-
 -- | Request body requirements are interpreted using 'ParseBody'.
 --
 -- Note if more than one 'ReqBody' is in an API endpoint, both parsers will
@@ -199,8 +193,8 @@ instance ( MimeRender ct a
          , HasCLI m api
          ) => HasCLI m (ReqBody' mods (ct ': cts) a :> api) where
     type CLI m (ReqBody' mods (ct ': cts) a :> api) = CLI m api
-    clientParser_ pm _ = parseBody @a %:>
-        (fmap . flip) (lmap . addBody) (clientParser_ pm (Proxy @api))
+    clientPStruct_ pm _ = parseBody @a %:>
+        (fmap . flip) (lmap . addBody) (clientPStruct_ pm (Proxy @api))
       where
         ctProxy = Proxy @ct
         addBody b = setRequestBodyLBS (mimeRender ctProxy b) (contentType ctProxy)
@@ -221,7 +215,137 @@ instance ( HasClient m (Verb method status cts' a)
          , ReflectMethod method
          ) => HasCLI m (Verb method status cts' a) where
     type CLI m (Verb method status cts' a) = Client m (Verb method status cts' a)
-    clientParser_ pm pa = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
+    clientPStruct_ pm pa = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
+
+-- instance {-# OVERLAPPABLE #-}
+--   ( RunStreamingClient m, MimeUnrender ct chunk, ReflectMethod method,
+--     FramingUnrender framing, FromSourceIO chunk a
+--   ) => HasClient m (Stream method status framing ct a) where
+
+-- instance
+--     ( HasClient m api, MimeRender ctype chunk, FramingRender framing, ToSourceIO chunk a
+--     ) => HasClient m (StreamBody' mods framing ctype a :> api)
+
+-- | A 'Header' in the middle of a path is interpreted as a command line
+-- argument, prefixed with "header".  For example, @'Header' "foo" 'Int'@
+-- is an option for @--header-foo@.
+--
+-- Like for 'QueryParam'',  arguments are associated with the action at
+-- their endpoint.  After entering all path components and positional
+-- arguments, the parser library will begin asking for arguments.
+instance ( KnownSymbol sym
+         , FromHttpApiData a
+         , ToHttpApiData a
+         , SBoolI (FoldRequired' 'False mods)
+         , Typeable a
+         , HasCLI m api
+         ) => HasCLI m (Header' mods sym a :> api) where
+    type CLI m (Header' mods sym a :> api) = CLI m api
+    clientPStruct_ pm _ = opt ?:>
+        (fmap . flip) (lmap . addParam) (clientPStruct_ pm (Proxy @api))
+      where
+        addParam :: RequiredArgument mods a -> Request -> Request
+        addParam = foldRequiredArgument (Proxy @mods) add (maybe id add)
+        add :: a -> Request -> Request
+        add v = addHeader (CI.mk . T.encodeUtf8 . T.pack $ pName) v
+        opt :: Opt (RequiredArgument mods a)
+        opt = Opt
+          { optName = printf "header-%s" pName
+          , optDesc = printf "Header data %s (%s)" pName pType
+          , optMeta = map toUpper pType
+          , optVals = Nothing
+          , optRead = case sbool @(FoldRequired mods) of
+              STrue  -> orRequired r
+              SFalse -> orOptional r
+          }
+        r :: ReadM a
+        r     = eitherReader $ first T.unpack . parseHeader . T.encodeUtf8 . T.pack
+        pType = show $ typeRep @a
+        pName = symbolVal (Proxy @sym)
+
+-- | Using 'HttpVersion' has no affect on CLI operations.
+instance HasCLI m api => HasCLI m (HttpVersion :> api) where
+    type CLI m (HttpVersion :> api) = CLI m api
+    clientPStruct_ pm _ = clientPStruct_ pm (Proxy @api)
+
+-- | 'Summary' is displayed during @--help@ when it is reached while
+-- navigating down subcommands.
+instance (KnownSymbol desc, HasCLI m api) => HasCLI m (Summary desc :> api) where
+  type CLI m (Summary desc :> api) = CLI m api
+
+  clientPStruct_ pm _ = note (symbolVal (Proxy @desc))
+                      $ clientPStruct_ pm (Proxy :: Proxy api)
+
+-- | 'Description' is displayed during @--help@ when it is reached while
+-- navigating down subcommands.
+instance (KnownSymbol desc, HasCLI m api) => HasCLI m (Description desc :> api) where
+  type CLI m (Description desc :> api) = CLI m api
+
+  clientPStruct_ pm _ = note (symbolVal (Proxy @desc))
+                      $ clientPStruct_ pm (Proxy :: Proxy api)
+
+
+-- instance HasCLI m Raw where
+
+instance HasCLI m api => HasCLI m (Vault :> api) where
+    type CLI m (Vault :> api) = CLI m api
+
+    clientPStruct_ pm _ = clientPStruct_ pm (Proxy @api)
+
+instance HasCLI m api => HasCLI m (RemoteHost :> api) where
+    type CLI m (RemoteHost :> api) = CLI m api
+
+    clientPStruct_ pm _ = clientPStruct_ pm (Proxy @api)
+
+instance HasCLI m api => HasCLI m (IsSecure :> api) where
+    type CLI m (IsSecure :> api) = CLI m api
+
+    clientPStruct_ pm _ = clientPStruct_ pm (Proxy @api)
+
+instance HasCLI m subapi => HasCLI m (WithNamedContext name context subapi) where
+    type CLI m (WithNamedContext name context subapi) = CLI m subapi
+
+    clientPStruct_ pm _ = clientPStruct_ pm (Proxy @subapi)
+
+-- | Adding 'AuthProtect' means that the result of parsing command line
+-- options will be a function that takes a 'AuthenticatedRequest' and
+-- returns an @m@ action to make a request to the server with that
+-- authentication data.
+--
+-- Please use a secure connection!
+instance HasCLI m api => HasCLI m (AuthProtect tag :> api) where
+    type CLI m (AuthProtect tag :> api) = AuthenticatedRequest (AuthProtect tag) -> CLI m api
+
+    clientPStruct_ pm _ = addAuth <$> clientPStruct_ pm (Proxy @api)
+      where
+        addAuth f r (AuthenticatedRequest (val, func)) = f . func val $ r
+
+-- | Adding 'BasicAuth' means that the result of parsing command line
+-- options will be a function that takes a 'BasicAuthData' and returns an
+-- @m@ action to make a request to the server with that authentication
+-- data.
+--
+-- Please use a secure connection!
+instance HasCLI m api => HasCLI m (BasicAuth realm usr :> api) where
+    type CLI m (BasicAuth realm usr :> api) = BasicAuthData -> CLI m api
+
+    clientPStruct_ pm _ = addAuth <$> clientPStruct_ pm (Proxy @api)
+      where
+        addAuth
+            :: (Request -> CLI m api)
+            -> Request
+            -> BasicAuthData
+            -> CLI m api
+        addAuth f r d = f . basicAuthReq d $ r
+
+
+-- | A helper class for defining directly how to parse request bodies.
+-- This allows more complex parsing of bodies.
+class ParseBody a where
+    parseBody :: Parser a
+
+    default parseBody :: (Typeable a, Read a) => Parser a
+    parseBody = defaultParseBody (show (typeRep @a)) auto
 
 defaultParseBody
     :: String       -- ^ type specification

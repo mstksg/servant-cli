@@ -238,7 +238,7 @@ addEndpointOpt o (Endpoint (Day eo eb ef)) =
 
 -- | Add a note.
 note :: String -> PStruct a -> PStruct a
-note n (PStruct ns cs c ep) = PStruct (ns ++ [n]) cs c ep
+note n (PStruct ns cs c ep) = PStruct (n : ns) cs c ep
 infixr 4 `note`
 
 -- | Add a single argument praser.

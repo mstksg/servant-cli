@@ -33,7 +33,7 @@ Arg :: String -> String -> String -> ReadM a -> Arg a
 [argRead] :: Arg a -> ReadM a
 data MultiArg :: Type -> Type
 [MultiArg] :: Arg a -> MultiArg [a]
-type Captures = Day Arg PStruct :+: Day MultiArg (Map Method :.: Endpoint)
+type Captures = Day Arg PStruct :+: Day MultiArg EndpointMap
 
 -- | Endpoint arguments and body.
 --   
@@ -41,11 +41,15 @@ type Captures = Day Arg PStruct :+: Day MultiArg (Map Method :.: Endpoint)
 data Endpoint a
 Endpoint :: Day (Ap Opt) Parser a -> Endpoint a
 [epStruct] :: Endpoint a -> Day (Ap Opt) Parser a
+data EndpointMap a
+EPM :: Map Method (Endpoint a) -> Maybe (Day ((:~:) Method) Endpoint a) -> EndpointMap a
+[epmGiven] :: EndpointMap a -> Map Method (Endpoint a)
+[epmRaw] :: EndpointMap a -> Maybe (Day ((:~:) Method) Endpoint a)
 
 -- | Structure for a parser of a given value that may use items from
 --   captures and arguments.
 data PStruct a
-PStruct :: [String] -> Map String (PStruct a) -> Maybe (Captures a) -> Map Method (Endpoint a) -> PStruct a
+PStruct :: [String] -> Map String (PStruct a) -> Maybe (Captures a) -> EndpointMap a -> PStruct a
 [psInfo] :: PStruct a -> [String]
 
 -- | path components
@@ -53,15 +57,13 @@ PStruct :: [String] -> Map String (PStruct a) -> Maybe (Captures a) -> Map Metho
 
 -- | captures
 [psCaptures] :: PStruct a -> Maybe (Captures a)
-
--- | endpoints
-[psEndpoints] :: PStruct a -> Map Method (Endpoint a)
-data PStructF (a_ahkU :: Type) r_aim7
-PStructF :: [[Char]] -> Map [Char] r_aim7 -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg ((:.:) (Map ByteString) Endpoint)) a_ahkU) -> Map ByteString (Endpoint a_ahkU) -> PStructF r_aim7
-[psInfoF] :: PStructF r_aim7 -> [[Char]]
-[psComponentsF] :: PStructF r_aim7 -> Map [Char] r_aim7
-[psCapturesF] :: PStructF r_aim7 -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg ((:.:) (Map ByteString) Endpoint)) a_ahkU)
-[psEndpointsF] :: PStructF r_aim7 -> Map ByteString (Endpoint a_ahkU)
+[psEndpoints] :: PStruct a -> EndpointMap a
+data PStructF (a_ah0f :: Type) r_ai2T
+PStructF :: [[Char]] -> Map [Char] r_ai2T -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ah0f) -> EndpointMap a_ah0f -> PStructF r_ai2T
+[psInfoF] :: PStructF r_ai2T -> [[Char]]
+[psComponentsF] :: PStructF r_ai2T -> Map [Char] r_ai2T
+[psCapturesF] :: PStructF r_ai2T -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ah0f)
+[psEndpointsF] :: PStructF r_ai2T -> EndpointMap a_ah0f
 
 -- | Convert a <a>PStruct</a> into a command line argument parser, from the
 --   <i>optparse-applicative</i> library. It can be run with
@@ -77,8 +79,14 @@ structParser_ :: PStruct a -> Bool -> [String] -> InfoMod a -> ParserInfo a
 
 -- | Combine two <a>PStruct</a>s, preferring the left hand side for
 --   conflicts. If the left hand has a capture, the right hand's components
---   are ignored.
+--   are ignored. If the left hand has a raw endpoint, the right hand's
+--   endpoints are ignored.
 altPStruct :: PStruct a -> PStruct a -> PStruct a
+
+-- | Combine two <a>EndpointMap</a>s, preferring the left hand side for
+--   conflicts. If the left hand has a raw endpoint, the right hand's
+--   endpoints are ignored.
+altEPM :: EndpointMap a -> EndpointMap a -> EndpointMap a
 branch :: PStruct a -> PStruct b -> PStruct (Either a b)
 infixr 3 `branch`
 
@@ -110,6 +118,9 @@ infixr 4 `note`
 -- | Create an endpoint action.
 endpoint :: Method -> a -> PStruct a
 
+-- | Create a raw endpoint.
+rawEndpoint :: (Method -> a) -> PStruct a
+
 -- | Helper to lift a <a>ReadM</a> into something that can be used with
 --   <a>optRead</a>.
 orRequired :: ReadM a -> Coyoneda OptRead a
@@ -125,9 +136,12 @@ instance Data.Foldable.Foldable (Servant.CLI.Structure.PStructF a)
 instance GHC.Base.Functor (Servant.CLI.Structure.PStructF a)
 instance Data.Functor.Foldable.Recursive (Servant.CLI.Structure.PStruct a)
 instance Data.Functor.Foldable.Corecursive (Servant.CLI.Structure.PStruct a)
+instance GHC.Base.Semigroup (Servant.CLI.Structure.EndpointMap a)
+instance GHC.Base.Monoid (Servant.CLI.Structure.EndpointMap a)
 instance GHC.Base.Semigroup (Servant.CLI.Structure.PStruct a)
 instance GHC.Base.Monoid (Servant.CLI.Structure.PStruct a)
 instance GHC.Base.Functor Servant.CLI.Structure.PStruct
+instance GHC.Base.Functor Servant.CLI.Structure.EndpointMap
 instance GHC.Base.Functor Servant.CLI.Structure.Endpoint
 instance GHC.Base.Functor Servant.CLI.Structure.Arg
 instance GHC.Base.Functor Servant.CLI.Structure.Opt
@@ -170,6 +184,7 @@ instance (GHC.TypeLits.KnownSymbol sym, Web.Internal.HttpApiData.FromHttpApiData
 instance Servant.CLI.Internal.HasCLI m api => Servant.CLI.Internal.HasCLI m (Network.HTTP.Types.Version.HttpVersion Servant.API.Sub.:> api)
 instance (GHC.TypeLits.KnownSymbol desc, Servant.CLI.Internal.HasCLI m api) => Servant.CLI.Internal.HasCLI m (Servant.API.Description.Summary desc Servant.API.Sub.:> api)
 instance (GHC.TypeLits.KnownSymbol desc, Servant.CLI.Internal.HasCLI m api) => Servant.CLI.Internal.HasCLI m (Servant.API.Description.Description desc Servant.API.Sub.:> api)
+instance Servant.Client.Core.RunClient.RunClient m => Servant.CLI.Internal.HasCLI m Servant.API.Raw.Raw
 instance Servant.CLI.Internal.HasCLI m api => Servant.CLI.Internal.HasCLI m (Data.Vault.Lazy.Vault Servant.API.Sub.:> api)
 instance Servant.CLI.Internal.HasCLI m api => Servant.CLI.Internal.HasCLI m (Servant.API.RemoteHost.RemoteHost Servant.API.Sub.:> api)
 instance Servant.CLI.Internal.HasCLI m api => Servant.CLI.Internal.HasCLI m (Servant.API.IsSecure.IsSecure Servant.API.Sub.:> api)

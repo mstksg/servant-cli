@@ -14,6 +14,8 @@ module Servant.CLI.ParseBody
 class ParseBody a
 parseBody :: ParseBody a => Parser a
 parseBody :: (ParseBody a, Typeable a, Read a) => Parser a
+
+-- | Default implementation that expects a <tt>--data</tt> option.
 defaultParseBody :: String -> ReadM a -> Parser a
 instance Servant.CLI.ParseBody.ParseBody Data.Text.Internal.Text
 instance Servant.CLI.ParseBody.ParseBody Data.Text.Internal.Lazy.Text
@@ -46,16 +48,23 @@ Arg :: String -> String -> String -> ReadM a -> Arg a
 [argDesc] :: Arg a -> String
 [argMeta] :: Arg a -> String
 [argRead] :: Arg a -> ReadM a
+
+-- | Interpret an <a>Arg</a> as something that can be given repeatedly an
+--   arbitrary number of times.
 data MultiArg :: Type -> Type
 [MultiArg] :: Arg a -> MultiArg [a]
+
+-- | Captures can be a single capture leading to the next level, or a
+--   multi-capture leading to an endpoint action.
 type Captures = Day Arg PStruct :+: Day MultiArg EndpointMap
 
 -- | Endpoint arguments and body.
---   
---   TODO: add things like status etc.
 data Endpoint a
 Endpoint :: Day (Ap Opt) Parser a -> Endpoint a
 [epStruct] :: Endpoint a -> Day (Ap Opt) Parser a
+
+-- | A map of endpoints associated with methods, paired with an optional
+--   "raw" endpoint.
 data EndpointMap a
 EPM :: Map Method (Endpoint a) -> Maybe (Day ((:~:) Method) Endpoint a) -> EndpointMap a
 [epmGiven] :: EndpointMap a -> Map Method (Endpoint a)
@@ -73,12 +82,12 @@ PStruct :: [String] -> Map String (PStruct a) -> Maybe (Captures a) -> EndpointM
 -- | captures
 [psCaptures] :: PStruct a -> Maybe (Captures a)
 [psEndpoints] :: PStruct a -> EndpointMap a
-data PStructF (a_aj23 :: Type) r_ajKI
-PStructF :: [[Char]] -> Map [Char] r_ajKI -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_aj23) -> EndpointMap a_aj23 -> PStructF r_ajKI
-[psInfoF] :: PStructF r_ajKI -> [[Char]]
-[psComponentsF] :: PStructF r_ajKI -> Map [Char] r_ajKI
-[psCapturesF] :: PStructF r_ajKI -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_aj23)
-[psEndpointsF] :: PStructF r_ajKI -> EndpointMap a_aj23
+data PStructF (a_ai6K :: Type) r_aiPp
+PStructF :: [[Char]] -> Map [Char] r_aiPp -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ai6K) -> EndpointMap a_ai6K -> PStructF r_aiPp
+[psInfoF] :: PStructF r_aiPp -> [[Char]]
+[psComponentsF] :: PStructF r_aiPp -> Map [Char] r_aiPp
+[psCapturesF] :: PStructF r_aiPp -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ai6K)
+[psEndpointsF] :: PStructF r_aiPp -> EndpointMap a_ai6K
 
 -- | Convert a <a>PStruct</a> into a command line argument parser, from the
 --   <i>optparse-applicative</i> library. It can be run with
@@ -92,16 +101,8 @@ structParser :: PStruct a -> InfoMod a -> ParserInfo a
 -- | Low-level implementation of <a>structParser</a>.
 structParser_ :: PStruct a -> Bool -> [String] -> InfoMod a -> ParserInfo a
 
--- | Combine two <a>PStruct</a>s, preferring the left hand side for
---   conflicts. If the left hand has a capture, the right hand's components
---   are ignored. If the left hand has a raw endpoint, the right hand's
---   endpoints are ignored.
-altPStruct :: PStruct a -> PStruct a -> PStruct a
-
--- | Combine two <a>EndpointMap</a>s, preferring the left hand side for
---   conflicts. If the left hand has a raw endpoint, the right hand's
---   endpoints are ignored.
-altEPM :: EndpointMap a -> EndpointMap a -> EndpointMap a
+-- | Combine two <a>PStruct</a>s in an either-or fashion, favoring the left
+--   hand side.
 branch :: PStruct a -> PStruct b -> PStruct (Either a b)
 infixr 3 `branch`
 
@@ -169,8 +170,16 @@ module Servant.CLI.HasCLI
 --   Unless you are adding new combinators to be used with APIs, you can
 --   ignore this class.
 class HasCLI m api where {
+    
+    -- | The type of the API client action that the command line parser will
+    --   return. In most cases, this will be the return type of the final
+    --   endpoint action, or else an <a>Either</a> between two branches.
     type family CLI (m :: Type -> Type) (api :: Type) :: Type;
 }
+
+-- | Generate a <a>PStruct</a> showing how to modify a <a>Request</a> and
+--   perform an action, given an API and underlying monad. Only meant for
+--   internal use; should be used through <a>clientPStruct</a> instead.
 clientPStruct_ :: HasCLI m api => Proxy m -> Proxy api -> PStruct (Request -> CLI m api)
 instance Servant.CLI.HasCLI.HasCLI m Servant.API.Empty.EmptyAPI
 instance (Servant.CLI.HasCLI.HasCLI m a, Servant.CLI.HasCLI.HasCLI m b) => Servant.CLI.HasCLI.HasCLI m (a Servant.API.Alternative.:<|> b)
@@ -198,7 +207,7 @@ instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Servant
 module Servant.CLI
 
 -- | Parse a servant client; the result can be run. A good choice of
---   <tt>m</tt> is <tt>ClientM</tt>.
+--   <tt>m</tt> is <a>ClientM</a>.
 --   
 --   It takes options on how the top-level prompt is displayed when given
 --   <tt>"--help"</tt>; it can be useful for adding a header or program
@@ -211,16 +220,32 @@ parseClient :: HasCLI m api => Proxy api -> Proxy m -> InfoMod (CLI m api) -> IO
 --   Unless you are adding new combinators to be used with APIs, you can
 --   ignore this class.
 class HasCLI m api
+
+-- | The type of the API client action that the command line parser will
+--   return. In most cases, this will be the return type of the final
+--   endpoint action, or else an <a>Either</a> between two branches.
 type family CLI (m :: Type -> Type) (api :: Type) :: Type
 
 -- | Create a structure for a command line parser.
 clientPStruct :: HasCLI m api => Proxy api -> Proxy m -> PStruct (CLI m api)
+
+-- | Convert a <a>PStruct</a> into a command line argument parser, from the
+--   <i>optparse-applicative</i> library. It can be run with
+--   <a>execParser</a>.
+--   
+--   It takes options on how the top-level prompt is displayed when given
+--   <tt>"--help"</tt>; it can be useful for adding a header or program
+--   description. Otherwise, just use <a>mempty</a>.
+structParser :: PStruct a -> InfoMod a -> ParserInfo a
 
 -- | A helper class for defining directly how to parse request bodies. This
 --   allows more complex parsing of bodies.
 class ParseBody a
 parseBody :: ParseBody a => Parser a
 parseBody :: (ParseBody a, Typeable a, Read a) => Parser a
+
+-- | Default implementation that expects a <tt>--data</tt> option.
+defaultParseBody :: String -> ReadM a -> Parser a
 
 -- | The class that helps us automatically get documentation for URL
 --   captures.

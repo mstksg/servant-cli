@@ -42,13 +42,11 @@ import           Data.Vinyl
 --clientPStruct pa pm = ($ defaultRequest) <$> clientPStruct_ pm pa
 
 -- | Create a structure for a command line parser.
---
--- If the no pa
 cliPStruct
     :: HasCLI m api
     => Proxy m
     -> Proxy api
-    -> HList (CLIParam m api)
+    -> Rec m (CLIParam m api)
     -> PStruct (m (CLIResult m api))
 cliPStruct pm pa = fmap ($ defaultRequest) . cliPStruct_ pm pa
 

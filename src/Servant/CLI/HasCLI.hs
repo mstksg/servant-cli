@@ -20,8 +20,10 @@ module Servant.CLI.HasCLI (
   -- , dropRec
   ) where
 
+import           Control.Monad
 import           Data.Bifunctor
 import           Data.Char
+import           Data.Function
 import           Data.Functor
 import           Data.Kind
 import           Data.List
@@ -71,7 +73,7 @@ class HasCLI m api where
     cliPStruct_
         :: Proxy m
         -> Proxy api
-        -> HList (CLIParam m api)
+        -> Rec m (CLIParam m api)
         -> PStruct (Request -> m (CLIResult m api))
 
     -- | Handle all the possibilities in a 'CLIResult', by giving the
@@ -327,14 +329,16 @@ instance ( ToSourceIO chunk a
          , MimeRender ctype chunk
          , FramingRender framing
          , HasCLI m api
+         , Monad m
          ) => HasCLI m (StreamBody' mods framing ctype a :> api) where
     type CLIParam   m (StreamBody' mods framing ctype a :> api)   = a ': CLIParam m api
     type CLIResult  m (StreamBody' mods framing ctype a :> api)   = CLIResult m api
     type CLIHandler m (StreamBody' mods framing ctype a :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ (Identity x :& p) = lmap addBody <$> cliPStruct_ pm (Proxy @api) p
+    cliPStruct_ pm _ (mx :& p) =
+        withParamM (addBody <$> mx) <$> cliPStruct_ pm (Proxy @api) p
       where
-        addBody = setRequestBody (RequestBodySource sourceIO) (contentType ctypeP)
+        addBody x = setRequestBody (RequestBodySource sourceIO) (contentType ctypeP)
           where
             ctypeP   = Proxy @ctype
             framingP = Proxy @framing
@@ -468,14 +472,14 @@ instance HasCLI m subapi => HasCLI m (WithNamedContext name context subapi) wher
 -- authentication data.
 --
 -- Please use a secure connection!
-instance HasCLI m api => HasCLI m (AuthProtect tag :> api) where
+instance (HasCLI m api, Monad m) => HasCLI m (AuthProtect tag :> api) where
     type CLIParam   m (AuthProtect tag :> api)   = AuthenticatedRequest (AuthProtect tag)
                                                 ': CLIParam m api
     type CLIResult  m (AuthProtect tag :> api)   = CLIResult m api
     type CLIHandler m (AuthProtect tag :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ (Identity (AuthenticatedRequest (val, func)) :& p) =
-        lmap (func val) <$> cliPStruct_ pm (Proxy @api) p
+    cliPStruct_ pm _ (d :& p) =
+        withParamM (uncurry (&) . unAuthReq <$> d) <$> cliPStruct_ pm (Proxy @api) p
 
     cliHandler pm _ = cliHandler pm (Proxy @api)
 
@@ -485,13 +489,24 @@ instance HasCLI m api => HasCLI m (AuthProtect tag :> api) where
 -- data.
 --
 -- Please use a secure connection!
-instance HasCLI m api => HasCLI m (BasicAuth realm usr :> api) where
+instance (HasCLI m api, Monad m) => HasCLI m (BasicAuth realm usr :> api) where
     type CLIParam   m (BasicAuth realm usr :> api)   = BasicAuthData
                                                     ': CLIParam m api
     type CLIResult  m (BasicAuth realm usr :> api)   = CLIResult m api
     type CLIHandler m (BasicAuth realm usr :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ (Identity d :& p) =
-        lmap (basicAuthReq d) <$> cliPStruct_ pm (Proxy @api) p
+    cliPStruct_ pm _ (d :& p) =
+        withParamM (basicAuthReq <$> d) <$> cliPStruct_ pm (Proxy @api) p
 
     cliHandler pm _ = cliHandler pm (Proxy @api)
+
+withParamM
+    :: Monad m
+    => m (a -> a)
+    -> (a -> m b)
+    -> a
+    -> m b
+withParamM mf g x = do
+    f <- mf
+    g (f x)
+

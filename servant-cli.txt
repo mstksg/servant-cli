@@ -62,9 +62,9 @@ Endpoint :: Day (Ap Opt) Parser a -> Endpoint a
 -- | A map of endpoints associated with methods, paired with an optional
 --   "raw" endpoint.
 data EndpointMap a
-EPM :: Map Method (Endpoint a) -> Maybe (Day ((:~:) Method) Endpoint a) -> EndpointMap a
+EPM :: Map Method (Endpoint a) -> Maybe (Endpoint (Method -> a)) -> EndpointMap a
 [epmGiven] :: EndpointMap a -> Map Method (Endpoint a)
-[epmRaw] :: EndpointMap a -> Maybe (Day ((:~:) Method) Endpoint a)
+[epmRaw] :: EndpointMap a -> Maybe (Endpoint (Method -> a))
 
 -- | Structure for a parser of a given value that may use items from
 --   captures and arguments.
@@ -78,12 +78,12 @@ PStruct :: [String] -> Map String (PStruct a) -> Maybe (Captures a) -> EndpointM
 -- | captures
 [psCaptures] :: PStruct a -> Maybe (Captures a)
 [psEndpoints] :: PStruct a -> EndpointMap a
-data PStructF (a_agcn :: Type) r_ahf1
-PStructF :: [[Char]] -> Map [Char] r_ahf1 -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_agcn) -> EndpointMap a_agcn -> PStructF r_ahf1
-[psInfoF] :: PStructF r_ahf1 -> [[Char]]
-[psComponentsF] :: PStructF r_ahf1 -> Map [Char] r_ahf1
-[psCapturesF] :: PStructF r_ahf1 -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_agcn)
-[psEndpointsF] :: PStructF r_ahf1 -> EndpointMap a_agcn
+data PStructF (a_ag88 :: Type) r_ahbt
+PStructF :: [[Char]] -> Map [Char] r_ahbt -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ag88) -> EndpointMap a_ag88 -> PStructF r_ahbt
+[psInfoF] :: PStructF r_ahbt -> [[Char]]
+[psComponentsF] :: PStructF r_ahbt -> Map [Char] r_ahbt
+[psCapturesF] :: PStructF r_ahbt -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ag88)
+[psEndpointsF] :: PStructF r_ahbt -> EndpointMap a_ag88
 
 -- | Convert a <a>PStruct</a> into a command line argument parser, from the
 --   <i>optparse-applicative</i> library. It can be run with

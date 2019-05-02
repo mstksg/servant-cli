@@ -13,6 +13,20 @@
 {-# LANGUAGE UndecidableInstances  #-}
 {-# LANGUAGE ViewPatterns          #-}
 
+-- |
+-- Module      : Servant.CLI.HasCLI
+-- Copyright   : (c) Justin Le 2019
+-- License     : BSD3
+--
+-- Maintainer  : justin@jle.im
+-- Stability   : experimental
+-- Portability : non-portable
+--
+-- Main module providing underlying functionality for the command line
+-- interface parser for servant API clients.
+--
+-- For the most part, you can ignore this module unless you're adding new
+-- API combinators.
 module Servant.CLI.HasCLI (
     HasCLI(..)
   -- * Utility
@@ -33,8 +47,8 @@ import           GHC.TypeLits hiding   (Mod)
 import           Options.Applicative
 import           Servant.API hiding    (addHeader, HList)
 import           Servant.API.Modifiers
+import           Servant.CLI.PStruct
 import           Servant.CLI.ParseBody
-import           Servant.CLI.Structure
 import           Servant.Client.Core
 import           Servant.Docs hiding   (Endpoint, Response)
 import           Text.Printf
@@ -49,22 +63,48 @@ import qualified Data.Text.Encoding    as T
 -- | Typeclass defining how each API combinator influences how a server can
 -- be interacted with using command line options.
 --
+-- Note that query parameters and captures all require /servant-docs/
+-- annotation instances, to allow for proper help messages.
+--
 -- Unless you are adding new combinators to be used with APIs, you can
 -- ignore this class.
 class HasCLI m api where
-    -- | The type of the API client action that the command line parser
-    -- will return.  In most cases, this will be the return type of the
-    -- final endpoint action, or else an 'Either' between two branches.
-    -- type CLI (m :: Type -> Type) (api :: Type) :: Type
 
+    -- | List of extra parameters that must be generated at runtime to
+    -- produce the desired request.
+    --
+    -- For most routes this will be an empty list, but it is non-empty for
+    -- 'StreamBody', 'BasicAuth', and 'AuthProtect'.
     type CLIParam   (m :: Type -> Type) (api :: Type) :: [Type]
+
+    -- | The parsed type of the client request response.  Usually this will
+    -- be a bunch of nested 'Either's for every API endpoint, nested
+    -- according to the ':<|>'s in the API.
     type CLIResult  (m :: Type -> Type) (api :: Type) :: Type
+
+    -- | The type of a data structure to conveniently handle the results of
+    -- all pontential endpoints.  This is useful because it is often
+    -- tedious to handle the bunch of nested 'Either's that 'CLIResult'
+    -- has.
+    --
+    -- It essentially lets you specify how to combine each potential
+    -- endpoint's response into a single output value.
+    --
+    -- Usually this will be a bunch of nested ':<|>'s which handle each
+    -- endpoint, according to the ':<|>'s in the API.  It mirrors the
+    -- structure of 'Client' and 'Servant.Server.ServerT'.
+    --
+    -- Used with functions like 'parseHandleClient'.
     type CLIHandler (m :: Type -> Type) (api :: Type) (r :: Type) :: Type
 
     -- | Generate a 'PStruct' showing how to modify a 'Request' and perform
     -- an action, given an API and underlying monad.  Only meant for
     -- internal use; should be used through 'Servant.CLI.cliPStruct'
     -- instead.
+    --
+    -- Takes a 'Rec' of actions to generate required items.  Pass in 'RNil' if
+    -- no parameters are expected (that is, if @'CLIParam' m api@ is an empty
+    -- list).  The actions will only be run if they are needed.
     cliPStruct_
         :: Proxy m
         -> Proxy api
@@ -72,7 +112,7 @@ class HasCLI m api where
         -> PStruct (Request -> m (CLIResult m api))
 
     -- | Handle all the possibilities in a 'CLIResult', by giving the
-    -- appropriate 'CLIHandler'
+    -- appropriate 'CLIHandler'.
     cliHandler
         :: Proxy m
         -> Proxy api
@@ -81,6 +121,12 @@ class HasCLI m api where
         -> r
 
 -- | 'EmptyAPI' will always fail to parse.
+--
+-- The branch ending in 'EmptyAPI' will never be return, so if this is
+-- combined using ':<|>', the branch will never end up on the side of
+-- 'EmptyAPI'.
+--
+-- One can use 'absurd' to handle this branch as a part of 'CLIHandler'.
 instance HasCLI m EmptyAPI where
     type CLIParam   m EmptyAPI   = '[]
     type CLIResult  m EmptyAPI   = Void
@@ -132,6 +178,9 @@ instance (KnownSymbol path, HasCLI m api) => HasCLI m (path :> api) where
     cliHandler pm _ = cliHandler pm (Proxy @api)
 
 -- | A 'Capture' is interpreted as a positional required command line argument.
+--
+-- Note that these require 'ToCapture' instances from /servant-docs/, to
+-- provide appropriate help messages.
 instance ( FromHttpApiData a
          , ToHttpApiData a
          , Typeable a
@@ -190,6 +239,9 @@ instance ( FromHttpApiData a
 -- 'QueryParam'' arguments are associated with the action at their
 -- endpoint.  After entering all path components and positional arguments,
 -- the parser library will begin asking for arguments.
+--
+-- Note that these require 'ToParam' instances from /servant-docs/, to
+-- provide appropriate help messages.
 instance ( KnownSymbol sym
          , FromHttpApiData a
          , ToHttpApiData a
@@ -234,6 +286,9 @@ instance ( KnownSymbol sym
 -- 'QueryFlag' arguments are associated with the action at their endpoint.
 -- After entering all path components and positional arguments, the parser
 -- library will begin asking for arguments.
+--
+-- Note that these require 'ToParam' instances from /servant-docs/, to
+-- provide appropriate help messages.
 instance ( KnownSymbol sym
          , ToParam (QueryFlag sym)
          , HasCLI m api

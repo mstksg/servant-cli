@@ -5,10 +5,9 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeOperators         #-}
+{-# OPTIONS_GHC -Wall              #-}
 {-# OPTIONS_GHC -fno-warn-orphans  #-}
 
-import           Control.Lens
-import           Control.Monad
 import           Data.Aeson
 import           Data.Proxy
 import           Data.String.Conversions
@@ -18,7 +17,7 @@ import           Options.Applicative
 import           Servant.API
 import           Servant.CLI
 import           Servant.Client
-import           Servant.Docs
+import qualified Data.Text               as T
 
 -- * Example
 
@@ -55,31 +54,6 @@ instance ToParam (QueryParam "capital" Bool) where
                   \Default is false."
                   Normal
 
-instance ToSample Greet where
-  toSamples _ =
-    [ ("If you use ?capital=true", Greet "HELLO, HASKELLER")
-    , ("If you use ?capital=false", Greet "Hello, haskeller")
-    ]
-
-instance ToSample Int where
-  toSamples _ = singleSample 1729
-
--- We define some introductory sections, these will appear at the top of the
--- documentation.
---
--- We pass them in with 'docsWith', below. If you only want to add
--- introductions, you may use 'docsWithIntros'
-intro1 :: DocIntro
-intro1 = DocIntro "On proper introductions." -- The title
-    [ "Hello there."
-    , "As documentation is usually written for humans, it's often useful \
-      \to introduce concepts with a few words." ] -- Elements are paragraphs
-
-intro2 :: DocIntro
-intro2 = DocIntro "This title is below the last"
-    [ "You'll also note that multiple intros are possible." ]
-
-
 -- API specification
 type TestApi =
        -- GET /hello/:name?capital={true, false}  returns a Greet as JSON or PlainText
@@ -95,18 +69,11 @@ type TestApi =
 testApi :: Proxy TestApi
 testApi = Proxy
 
--- Build some extra information for the DELETE /greet/:greetid endpoint. We
--- want to add documentation about a secret unicorn header and some extra
--- notes.
-extra :: ExtraInfo TestApi
-extra =
-    extraInfo (Proxy :: Proxy ("greet" :> Capture "greetid" Text :> Delete '[JSON] NoContent)) $
-             defAction & headers <>~ ["unicorns"]
-                       & notes   <>~ [ DocNote "Title" ["This is some text"]
-                                     , DocNote "Second secton" ["And some more"]
-                                     ]
-
 main :: IO ()
-main = void . parseClient testApi (Proxy @ClientM) $
-                  header "example"
-               <> progDesc "Example API"
+main = do
+    _ <- parseHandleClient' testApi (Proxy @ClientM)
+            (header "example" <> progDesc "Example API")
+          $ (\(Greet s) -> T.unpack s)
+       :<|> (show @(ResponseHeader "X-Example" Int) . lookupResponseHeader)
+       :<|> const "deleted"
+    pure ()

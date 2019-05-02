@@ -10,7 +10,20 @@
 {-# LANGUAGE TypeFamilies      #-}
 {-# LANGUAGE TypeOperators     #-}
 
-module Servant.CLI.Structure (
+-- |
+-- Module      : Servant.CLI.PStruct
+-- Copyright   : (c) Justin Le 2019
+-- License     : BSD3
+--
+-- Maintainer  : justin@jle.im
+-- Stability   : experimental
+-- Portability : non-portable
+--
+-- Internal module providing a data structure for representing structure of
+-- command line parsers that can be manipulated as an ADT, as well as
+-- functionality to interpret it as a 'Parser' command line argument
+-- parser.
+module Servant.CLI.PStruct (
     OptRead(..)
   , Opt(..)
   , Arg(..)
@@ -109,7 +122,8 @@ data PStruct a = PStruct
     , psEndpoints  :: EndpointMap a
     }
   deriving Functor
--- TODO: Capture vs. Endpoint interplay is a bit weird.
+-- TODO: Capture vs. Endpoint interplay is a bit weird, when they are at
+-- the same level.
 
 makeBaseFunctor ''PStruct
 

@@ -11,6 +11,22 @@
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
 
+-- |
+-- Module      : Servant.CLI
+-- Copyright   : (c) Justin Le 2019
+-- License     : BSD3
+--
+-- Maintainer  : justin@jle.im
+-- Stability   : experimental
+-- Portability : non-portable
+--
+-- Parse command line arguments into a servant client, from a servant API.
+--
+-- Mainly used through 'parseClient' and 'parseHandleClient'.
+-- 'parseClient' returns a servant client action that returns nested
+-- 'Either's for every endpoint, but 'parseHandleClient' allows you to
+-- conveniently specify how you want to combine each endpoint entry into
+-- a single result.
 module Servant.CLI (
     parseClient, parseHandleClient
   , parseClient', parseHandleClient'
@@ -22,20 +38,19 @@ module Servant.CLI (
   -- * Re-export
   , ParseBody(..), defaultParseBody
   , ToCapture(..), DocCapture(..)
-  , ToParam(..), DocQueryParam(..)
+  , ToParam(..), DocQueryParam(..), ParamKind(..)
   , Rec(..)
   ) where
 
 import           Data.Proxy
+import           Data.Vinyl
 import           Options.Applicative
 import           Servant.CLI.HasCLI
+import           Servant.CLI.PStruct
 import           Servant.CLI.ParseBody
-import           Servant.CLI.Structure
 import           Servant.Client.Core
 import           Servant.Docs
-import           Data.Vinyl
 
-    
 -- | Create a structure for a command line parser.
 --
 -- Takes a 'Rec' of actions to generate required items.  Pass in 'RNil' if
@@ -61,7 +76,8 @@ cliPStruct pm pa = fmap ($ defaultRequest) . cliPStruct_ pm pa
 --
 -- Takes a 'Rec' of actions to generate required items.  Pass in 'RNil' if
 -- no parameters are expected (that is, if @'CLIParam' m api@ is an empty
--- list).  The actions will only be run if they are needed.
+-- list), or use 'parseClient''.  The actions will only be run if they are
+-- needed.
 --
 -- Takes options on how the top-level prompt is displayed when given
 -- @"--help"@; it can be useful for adding a header or program description.
@@ -77,15 +93,18 @@ parseClient pa pm p im = execParser . flip structParser im $ cliPStruct pm pa p
 
 -- | Parse a server client, like 'parseClient'.  However, instead of that
 -- client action returning the request response, instead use a 'CLIHandler'
--- to handle every potential request response.
+-- to handle every potential request response.  It essentially lets you
+-- specify how to combine each potential endpoint's response into a single
+-- output value.
 --
--- The handler is usually a ':<|>' for every endpoint branch.  You can find
--- it by using typed holes or asking ghci with @:t@ or @:kind! forall m r.
--- CLIHandler m MyAPI r@.
+-- The handler is usually a 'Servant.API.:<|>' for every endpoint branch.
+-- You can find it by using typed holes or asking ghci with @:t@ or @:kind!
+-- forall m r.  CLIHandler m MyAPI r@.
 --
 -- Takes a 'Rec' of actions to generate required items.  Pass in 'RNil' if
 -- no parameters are expected (that is, if @'CLIParam' m api@ is an empty
--- list).  The actions will only be run if they are needed.
+-- list), or use 'parseHandleClient''.  The actions will only be run if
+-- they are needed.
 --
 -- Takes options on how the top-level prompt is displayed when given
 -- @"--help"@; it can be useful for adding a header or program description.

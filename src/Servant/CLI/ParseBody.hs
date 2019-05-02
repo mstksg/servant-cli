@@ -2,6 +2,17 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
+-- |
+-- Module      : Servant.CLI.ParseBody
+-- Copyright   : (c) Justin Le 2019
+-- License     : BSD3
+--
+-- Maintainer  : justin@jle.im
+-- Stability   : experimental
+-- Portability : non-portable
+--
+-- Provides the interface for 'ParseBody', a helper class for defining
+-- directly how to parse request bodies.
 module Servant.CLI.ParseBody (
     ParseBody(..)
   , defaultParseBody
@@ -16,6 +27,8 @@ import qualified Data.Text.Lazy      as TL
 
 -- | A helper class for defining directly how to parse request bodies.
 -- This allows more complex parsing of bodies.
+--
+-- You need an instance of this for every type you use with 'ReqBody'.
 class ParseBody a where
     parseBody :: Parser a
 

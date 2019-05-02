@@ -82,12 +82,12 @@ PStruct :: [String] -> Map String (PStruct a) -> Maybe (Captures a) -> EndpointM
 -- | captures
 [psCaptures] :: PStruct a -> Maybe (Captures a)
 [psEndpoints] :: PStruct a -> EndpointMap a
-data PStructF (a_ai6K :: Type) r_aiPp
-PStructF :: [[Char]] -> Map [Char] r_aiPp -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ai6K) -> EndpointMap a_ai6K -> PStructF r_aiPp
-[psInfoF] :: PStructF r_aiPp -> [[Char]]
-[psComponentsF] :: PStructF r_aiPp -> Map [Char] r_aiPp
-[psCapturesF] :: PStructF r_aiPp -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ai6K)
-[psEndpointsF] :: PStructF r_aiPp -> EndpointMap a_ai6K
+data PStructF (a_aieb :: Type) r_aiWQ
+PStructF :: [[Char]] -> Map [Char] r_aiWQ -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_aieb) -> EndpointMap a_aieb -> PStructF r_aiWQ
+[psInfoF] :: PStructF r_aiWQ -> [[Char]]
+[psComponentsF] :: PStructF r_aiWQ -> Map [Char] r_aiWQ
+[psCapturesF] :: PStructF r_aiWQ -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_aieb)
+[psEndpointsF] :: PStructF r_aiWQ -> EndpointMap a_aieb
 
 -- | Convert a <a>PStruct</a> into a command line argument parser, from the
 --   <i>optparse-applicative</i> library. It can be run with
@@ -173,16 +173,26 @@ class HasCLI m api where {
     
     -- | The type of the API client action that the command line parser will
     --   return. In most cases, this will be the return type of the final
-    --   endpoint action, or else an <a>Either</a> between two branches.
-    type family CLI (m :: Type -> Type) (api :: Type) :: Type;
+    --   endpoint action, or else an <a>Either</a> between two branches. type
+    --   CLI (m :: Type -&gt; Type) (api :: Type) :: Type
+    type family CLIParam (m :: Type -> Type) (api :: Type) :: [Type];
+    type family CLIResult (m :: Type -> Type) (api :: Type) :: Type;
+    type family CLIHandler (m :: Type -> Type) (api :: Type) (r :: Type) :: Type;
 }
 
 -- | Generate a <a>PStruct</a> showing how to modify a <a>Request</a> and
 --   perform an action, given an API and underlying monad. Only meant for
---   internal use; should be used through <a>clientPStruct</a> instead.
-clientPStruct_ :: HasCLI m api => Proxy m -> Proxy api -> PStruct (Request -> CLI m api)
+--   internal use; should be used through <a>cliPStruct</a> instead.
+cliPStruct_ :: HasCLI m api => Proxy m -> Proxy api -> Rec m (CLIParam m api) -> PStruct (Request -> m (CLIResult m api))
+
+-- | Handle all the possibilities in a <a>CLIResult</a>, by giving the
+--   appropriate <a>CLIHandler</a>
+cliHandler :: HasCLI m api => Proxy m -> Proxy api -> CLIHandler m api r -> CLIResult m api -> r
+
+-- | Un-append two <a>Rec</a>s.
+splitRec :: forall as bs g. RecApplicative as => Rec g (as ++ bs) -> (Rec g as, Rec g bs)
 instance Servant.CLI.HasCLI.HasCLI m Servant.API.Empty.EmptyAPI
-instance (Servant.CLI.HasCLI.HasCLI m a, Servant.CLI.HasCLI.HasCLI m b) => Servant.CLI.HasCLI.HasCLI m (a Servant.API.Alternative.:<|> b)
+instance (Servant.CLI.HasCLI.HasCLI m a, Servant.CLI.HasCLI.HasCLI m b, GHC.Base.Functor m, Data.Vinyl.Core.RecApplicative (Servant.CLI.HasCLI.CLIParam m a)) => Servant.CLI.HasCLI.HasCLI m (a Servant.API.Alternative.:<|> b)
 instance (GHC.TypeLits.KnownSymbol path, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (path Servant.API.Sub.:> api)
 instance (Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToCapture (Servant.API.Capture.Capture sym a), Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Capture.Capture' mods sym a Servant.API.Sub.:> api)
 instance (Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToCapture (Servant.API.Capture.CaptureAll sym a), Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Capture.CaptureAll sym a Servant.API.Sub.:> api)
@@ -191,7 +201,7 @@ instance (GHC.TypeLits.KnownSymbol sym, Servant.Docs.Internal.ToParam (Servant.A
 instance (Servant.API.ContentTypes.MimeRender ct a, Servant.CLI.ParseBody.ParseBody a, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.ReqBody.ReqBody' mods (ct : cts) a Servant.API.Sub.:> api)
 instance forall k1 (m :: * -> *) (method :: k1) (status :: GHC.Types.Nat) (cts' :: [*]) a. (Servant.Client.Core.HasClient.HasClient m (Servant.API.Verbs.Verb method status cts' a), Servant.API.Verbs.ReflectMethod method) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Verbs.Verb method status cts' a)
 instance forall k1 (m :: * -> *) ct chunk (method :: k1) framing a (status :: GHC.Types.Nat). (Servant.Client.Core.RunClient.RunStreamingClient m, Servant.API.ContentTypes.MimeUnrender ct chunk, Servant.API.Verbs.ReflectMethod method, Servant.API.Stream.FramingUnrender framing, Servant.API.Stream.FromSourceIO chunk a) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Stream.Stream method status framing ct a)
-instance (Servant.API.Stream.ToSourceIO chunk a, Servant.API.ContentTypes.MimeRender ctype chunk, Servant.API.Stream.FramingRender framing, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Stream.StreamBody' mods framing ctype a Servant.API.Sub.:> api)
+instance (Servant.API.Stream.ToSourceIO chunk a, Servant.API.ContentTypes.MimeRender ctype chunk, Servant.API.Stream.FramingRender framing, Servant.CLI.HasCLI.HasCLI m api, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Stream.StreamBody' mods framing ctype a Servant.API.Sub.:> api)
 instance (GHC.TypeLits.KnownSymbol sym, Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Singletons.Bool.SBoolI (Servant.API.Modifiers.FoldRequired' 'GHC.Types.False mods), Data.Typeable.Internal.Typeable a, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Header.Header' mods sym a Servant.API.Sub.:> api)
 instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Network.HTTP.Types.Version.HttpVersion Servant.API.Sub.:> api)
 instance (GHC.TypeLits.KnownSymbol desc, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Description.Summary desc Servant.API.Sub.:> api)
@@ -201,33 +211,88 @@ instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Data.Va
 instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Servant.API.RemoteHost.RemoteHost Servant.API.Sub.:> api)
 instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Servant.API.IsSecure.IsSecure Servant.API.Sub.:> api)
 instance Servant.CLI.HasCLI.HasCLI m subapi => Servant.CLI.HasCLI.HasCLI m (Servant.API.WithNamedContext.WithNamedContext name context subapi)
-instance forall k (m :: * -> *) api (tag :: k). Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Servant.API.Experimental.Auth.AuthProtect tag Servant.API.Sub.:> api)
-instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Servant.API.BasicAuth.BasicAuth realm usr Servant.API.Sub.:> api)
+instance forall k (m :: * -> *) api (tag :: k). (Servant.CLI.HasCLI.HasCLI m api, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Experimental.Auth.AuthProtect tag Servant.API.Sub.:> api)
+instance (Servant.CLI.HasCLI.HasCLI m api, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.BasicAuth.BasicAuth realm usr Servant.API.Sub.:> api)
 
 module Servant.CLI
 
 -- | Parse a servant client; the result can be run. A good choice of
 --   <tt>m</tt> is <a>ClientM</a>.
 --   
---   It takes options on how the top-level prompt is displayed when given
+--   Returns the request response, which is usually a layer of
+--   <a>Either</a> for every endpoint branch. You can find the response
+--   type directly by using typed holes or asking ghci with <tt>:t</tt> or
+--   <tt>:kind! forall m. CLIResult m MyAPI</tt>. Because it might be
+--   tedious handling nested <a>Either</a>s, see <a>parseHandleClient</a>
+--   for a way to handle each potential branch in a convenient way.
+--   
+--   Takes a <a>Rec</a> of actions to generate required items. Pass in
+--   <a>RNil</a> if no parameters are expected (that is, if
+--   <tt><a>CLIParam</a> m api</tt> is an empty list). The actions will
+--   only be run if they are needed.
+--   
+--   Takes options on how the top-level prompt is displayed when given
 --   <tt>"--help"</tt>; it can be useful for adding a header or program
 --   description. Otherwise, just use <a>mempty</a>.
-parseClient :: HasCLI m api => Proxy api -> Proxy m -> InfoMod (CLI m api) -> IO (CLI m api)
+parseClient :: HasCLI m api => Proxy api -> Proxy m -> Rec m (CLIParam m api) -> InfoMod (m (CLIResult m api)) -> IO (m (CLIResult m api))
+
+-- | Parse a server client, like <a>parseClient</a>. However, instead of
+--   that client action returning the request response, instead use a
+--   <a>CLIHandler</a> to handle every potential request response.
+--   
+--   The handler is usually a <tt>:&lt;|&gt;</tt> for every endpoint
+--   branch. You can find it by using typed holes or asking ghci with
+--   <tt>:t</tt> or <tt>:kind! forall m r. CLIHandler m MyAPI r</tt>.
+--   
+--   Takes a <a>Rec</a> of actions to generate required items. Pass in
+--   <a>RNil</a> if no parameters are expected (that is, if
+--   <tt><a>CLIParam</a> m api</tt> is an empty list). The actions will
+--   only be run if they are needed.
+--   
+--   Takes options on how the top-level prompt is displayed when given
+--   <tt>"--help"</tt>; it can be useful for adding a header or program
+--   description. Otherwise, just use <a>mempty</a>.
+parseHandleClient :: (HasCLI m api, Functor m) => Proxy api -> Proxy m -> Rec m (CLIParam m api) -> InfoMod (m (CLIResult m api)) -> CLIHandler m api r -> IO (m r)
+
+-- | A version of <a>parseClient</a> that works when the client action
+--   requires no extra parameters.
+parseClient' :: (HasCLI m api, CLIParam m api ~ '[]) => Proxy api -> Proxy m -> InfoMod (m (CLIResult m api)) -> IO (m (CLIResult m api))
+
+-- | A version of <a>parseHandleClient</a> that works when the client
+--   action requires
+parseHandleClient' :: (HasCLI m api, Functor m, CLIParam m api ~ '[]) => Proxy api -> Proxy m -> InfoMod (m (CLIResult m api)) -> CLIHandler m api r -> IO (m r)
 
 -- | Typeclass defining how each API combinator influences how a server can
 --   be interacted with using command line options.
 --   
 --   Unless you are adding new combinators to be used with APIs, you can
 --   ignore this class.
-class HasCLI m api
+class HasCLI m api where {
+    
+    -- | The type of the API client action that the command line parser will
+    --   return. In most cases, this will be the return type of the final
+    --   endpoint action, or else an <a>Either</a> between two branches. type
+    --   CLI (m :: Type -&gt; Type) (api :: Type) :: Type
+    type family CLIParam (m :: Type -> Type) (api :: Type) :: [Type];
+    type family CLIResult (m :: Type -> Type) (api :: Type) :: Type;
+    type family CLIHandler (m :: Type -> Type) (api :: Type) (r :: Type) :: Type;
+}
 
--- | The type of the API client action that the command line parser will
---   return. In most cases, this will be the return type of the final
---   endpoint action, or else an <a>Either</a> between two branches.
-type family CLI (m :: Type -> Type) (api :: Type) :: Type
+-- | Handle all the possibilities in a <a>CLIResult</a>, by giving the
+--   appropriate <a>CLIHandler</a>
+cliHandler :: HasCLI m api => Proxy m -> Proxy api -> CLIHandler m api r -> CLIResult m api -> r
 
 -- | Create a structure for a command line parser.
-clientPStruct :: HasCLI m api => Proxy api -> Proxy m -> PStruct (CLI m api)
+--   
+--   Takes a <a>Rec</a> of actions to generate required items. Pass in
+--   <a>RNil</a> if no parameters are expected (that is, if
+--   <tt><a>CLIParam</a> m api</tt> is an empty list). The actions will
+--   only be run if they are needed.
+cliPStruct :: HasCLI m api => Proxy m -> Proxy api -> Rec m (CLIParam m api) -> PStruct (m (CLIResult m api))
+
+-- | A version of <a>cliPStruct</a> that works when the client action
+--   requires no extra parameters.
+cliPStruct' :: (HasCLI m api, CLIParam m api ~ '[]) => Proxy m -> Proxy api -> PStruct (m (CLIResult m api))
 
 -- | Convert a <a>PStruct</a> into a command line argument parser, from the
 --   <i>optparse-applicative</i> library. It can be run with
@@ -295,3 +360,13 @@ DocQueryParam :: String -> [String] -> String -> ParamKind -> DocQueryParam
 [_paramValues] :: DocQueryParam -> [String]
 [_paramDesc] :: DocQueryParam -> String
 [_paramKind] :: DocQueryParam -> ParamKind
+
+-- | A record is parameterized by a universe <tt>u</tt>, an interpretation
+--   <tt>f</tt> and a list of rows <tt>rs</tt>. The labels or indices of
+--   the record are given by inhabitants of the kind <tt>u</tt>; the type
+--   of values at any label <tt>r :: u</tt> is given by its interpretation
+--   <tt>f r :: *</tt>.
+data Rec (a :: u -> Type) (b :: [u]) :: forall u. () => u -> Type -> [u] -> Type
+[RNil] :: forall u (a :: u -> Type) (b :: [u]). () => Rec a ([] :: [u])
+[:&] :: forall u (a :: u -> Type) (b :: [u]) (r :: u) (rs :: [u]). () => !a r -> !Rec a rs -> Rec a (r : rs)
+infixr 7 :&

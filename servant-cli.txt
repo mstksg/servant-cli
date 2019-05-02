@@ -106,8 +106,11 @@ infixr 3 `branch`
 ($:>) :: String -> PStruct a -> PStruct a
 infixr 4 $:>
 
--- | Add a request body to all endpoints. NOTE!!!!! UNDEFINED BEHAVIOR IF
---   DONE MORE THAN ONCE?
+-- | Add a request body to all endpoints.
+--   
+--   If done more than once per endpoint, it runs *both* parsers; however,
+--   we can only send one request body, so this is undefined behavior as a
+--   client.
 (%:>) :: Parser a -> PStruct (a -> b) -> PStruct b
 infixr 4 %:>
 
@@ -123,8 +126,8 @@ infixr 4 #:>
 (##:>) :: Arg a -> PStruct ([a] -> b) -> PStruct b
 infixr 4 ##:>
 
--- | Add a note.
-note :: String -> PStruct a -> PStruct a
+-- | Add notes to the beginning of a documentation level.
+note :: [String] -> PStruct a -> PStruct a
 infixr 4 `note`
 
 -- | Create an endpoint action.
@@ -205,7 +208,7 @@ class HasCLI m api where {
     --   
     --   For most routes this will be an empty list, but it is non-empty for
     --   <a>StreamBody</a>, <a>BasicAuth</a>, and <a>AuthProtect</a>.
-    type family CLIParam (m :: Type -> Type) (api :: Type) :: [Type];
+    type family CLIContext (m :: Type -> Type) (api :: Type) :: [Type];
     
     -- | The parsed type of the client request response. Usually this will be a
     --   bunch of nested <a>Either</a>s for every API endpoint, nested
@@ -234,9 +237,9 @@ class HasCLI m api where {
 --   Takes a <a>Rec</a> of actions to generate required items that cannot
 --   be passed via the command line (like authentication). Pass in
 --   <a>RNil</a> if no parameters are expected (that is, if
---   <tt><a>CLIParam</a> m api</tt> is an empty list). The actions will
+--   <tt><a>CLIContext</a> m api</tt> is an empty list). The actions will
 --   only be run if they are needed.
-cliPStruct_ :: HasCLI m api => Proxy m -> Proxy api -> Rec m (CLIParam m api) -> PStruct (Request -> m (CLIResult m api))
+cliPStruct_ :: HasCLI m api => Proxy m -> Proxy api -> Rec m (CLIContext m api) -> PStruct (Request -> m (CLIResult m api))
 
 -- | Handle all the possibilities in a <a>CLIResult</a>, by giving the
 --   appropriate <a>CLIHandler</a>.
@@ -245,7 +248,7 @@ cliHandler :: HasCLI m api => Proxy m -> Proxy api -> CLIHandler m api r -> CLIR
 -- | Un-append two <a>Rec</a>s.
 splitRec :: forall as bs g. RecApplicative as => Rec g (as ++ bs) -> (Rec g as, Rec g bs)
 instance Servant.CLI.HasCLI.HasCLI m Servant.API.Empty.EmptyAPI
-instance (Servant.CLI.HasCLI.HasCLI m a, Servant.CLI.HasCLI.HasCLI m b, GHC.Base.Functor m, Data.Vinyl.Core.RecApplicative (Servant.CLI.HasCLI.CLIParam m a)) => Servant.CLI.HasCLI.HasCLI m (a Servant.API.Alternative.:<|> b)
+instance (Servant.CLI.HasCLI.HasCLI m a, Servant.CLI.HasCLI.HasCLI m b, GHC.Base.Functor m, Data.Vinyl.Core.RecApplicative (Servant.CLI.HasCLI.CLIContext m a)) => Servant.CLI.HasCLI.HasCLI m (a Servant.API.Alternative.:<|> b)
 instance (GHC.TypeLits.KnownSymbol path, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (path Servant.API.Sub.:> api)
 instance (Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToCapture (Servant.API.Capture.Capture sym a), Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Capture.Capture' mods sym a Servant.API.Sub.:> api)
 instance (Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToCapture (Servant.API.Capture.CaptureAll sym a), Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Capture.CaptureAll sym a Servant.API.Sub.:> api)
@@ -265,7 +268,7 @@ instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Servant
 instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Servant.API.IsSecure.IsSecure Servant.API.Sub.:> api)
 instance Servant.CLI.HasCLI.HasCLI m subapi => Servant.CLI.HasCLI.HasCLI m (Servant.API.WithNamedContext.WithNamedContext name context subapi)
 instance forall k (m :: * -> *) api (tag :: k). (Servant.CLI.HasCLI.HasCLI m api, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Experimental.Auth.AuthProtect tag Servant.API.Sub.:> api)
-instance (Servant.CLI.HasCLI.HasCLI m api, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.BasicAuth.BasicAuth realm usr Servant.API.Sub.:> api)
+instance (Servant.Docs.Internal.ToAuthInfo (Servant.API.BasicAuth.BasicAuth realm usr), Servant.CLI.HasCLI.HasCLI m api, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.BasicAuth.BasicAuth realm usr Servant.API.Sub.:> api)
 
 
 -- | Parse command line arguments into a servant client, from a servant
@@ -291,14 +294,14 @@ module Servant.CLI
 --   
 --   Takes a <a>Rec</a> of actions to generate required items that cannot
 --   be passed via the command line (like authentication). Pass in
---   <a>RNil</a> if no parameters are expected (that is, if
---   <tt><a>CLIParam</a> m api</tt> is an empty list), or use
+--   <a>RNil</a> if no context is expected (that is, if
+--   <tt><a>CLIContext</a> m api</tt> is an empty list), or use
 --   <a>parseClient'</a>. The actions will only be run if they are needed.
 --   
 --   Takes options on how the top-level prompt is displayed when given
 --   <tt>"--help"</tt>; it can be useful for adding a header or program
 --   description. Otherwise, just use <a>mempty</a>.
-parseClient :: HasCLI m api => Proxy api -> Proxy m -> Rec m (CLIParam m api) -> InfoMod (m (CLIResult m api)) -> IO (m (CLIResult m api))
+parseClient :: HasCLI m api => Proxy api -> Proxy m -> Rec m (CLIContext m api) -> InfoMod (m (CLIResult m api)) -> IO (m (CLIResult m api))
 
 -- | Parse a server client, like <a>parseClient</a>. However, instead of
 --   that client action returning the request response, instead use a
@@ -312,23 +315,23 @@ parseClient :: HasCLI m api => Proxy api -> Proxy m -> Rec m (CLIParam m api) ->
 --   
 --   Takes a <a>Rec</a> of actions to generate required items that cannot
 --   be passed via the command line (like authentication). Pass in
---   <a>RNil</a> if no parameters are expected (that is, if
---   <tt><a>CLIParam</a> m api</tt> is an empty list), or use
+--   <a>RNil</a> if no context is expected (that is, if
+--   <tt><a>CLIContext</a> m api</tt> is an empty list), or use
 --   <a>parseHandleClient'</a>. The actions will only be run if they are
 --   needed.
 --   
 --   Takes options on how the top-level prompt is displayed when given
 --   <tt>"--help"</tt>; it can be useful for adding a header or program
 --   description. Otherwise, just use <a>mempty</a>.
-parseHandleClient :: (HasCLI m api, Functor m) => Proxy api -> Proxy m -> Rec m (CLIParam m api) -> InfoMod (m (CLIResult m api)) -> CLIHandler m api r -> IO (m r)
+parseHandleClient :: (HasCLI m api, Functor m) => Proxy api -> Proxy m -> Rec m (CLIContext m api) -> InfoMod (m (CLIResult m api)) -> CLIHandler m api r -> IO (m r)
 
 -- | A version of <a>parseClient</a> that works when the client action
---   requires no extra parameters.
-parseClient' :: (HasCLI m api, CLIParam m api ~ '[]) => Proxy api -> Proxy m -> InfoMod (m (CLIResult m api)) -> IO (m (CLIResult m api))
+--   requires no extra context.
+parseClient' :: (HasCLI m api, CLIContext m api ~ '[]) => Proxy api -> Proxy m -> InfoMod (m (CLIResult m api)) -> IO (m (CLIResult m api))
 
 -- | A version of <a>parseHandleClient</a> that works when the client
---   action requires no extra parameters.
-parseHandleClient' :: (HasCLI m api, Functor m, CLIParam m api ~ '[]) => Proxy api -> Proxy m -> InfoMod (m (CLIResult m api)) -> CLIHandler m api r -> IO (m r)
+--   action requires no extra context.
+parseHandleClient' :: (HasCLI m api, Functor m, CLIContext m api ~ '[]) => Proxy api -> Proxy m -> InfoMod (m (CLIResult m api)) -> CLIHandler m api r -> IO (m r)
 
 -- | Typeclass defining how each API combinator influences how a server can
 --   be interacted with using command line options.
@@ -346,7 +349,7 @@ class HasCLI m api where {
     --   
     --   For most routes this will be an empty list, but it is non-empty for
     --   <a>StreamBody</a>, <a>BasicAuth</a>, and <a>AuthProtect</a>.
-    type family CLIParam (m :: Type -> Type) (api :: Type) :: [Type];
+    type family CLIContext (m :: Type -> Type) (api :: Type) :: [Type];
     
     -- | The parsed type of the client request response. Usually this will be a
     --   bunch of nested <a>Either</a>s for every API endpoint, nested
@@ -375,14 +378,14 @@ cliHandler :: HasCLI m api => Proxy m -> Proxy api -> CLIHandler m api r -> CLIR
 -- | Create a structure for a command line parser.
 --   
 --   Takes a <a>Rec</a> of actions to generate required items. Pass in
---   <a>RNil</a> if no parameters are expected (that is, if
---   <tt><a>CLIParam</a> m api</tt> is an empty list). The actions will
+--   <a>RNil</a> if no extra context is expected (that is, if
+--   <tt><a>CLIContext</a> m api</tt> is an empty list). The actions will
 --   only be run if they are needed.
-cliPStruct :: HasCLI m api => Proxy m -> Proxy api -> Rec m (CLIParam m api) -> PStruct (m (CLIResult m api))
+cliPStruct :: HasCLI m api => Proxy m -> Proxy api -> Rec m (CLIContext m api) -> PStruct (m (CLIResult m api))
 
 -- | A version of <a>cliPStruct</a> that works when the client action
---   requires no extra parameters.
-cliPStruct' :: (HasCLI m api, CLIParam m api ~ '[]) => Proxy m -> Proxy api -> PStruct (m (CLIResult m api))
+--   requires no extra context.
+cliPStruct' :: (HasCLI m api, CLIContext m api ~ '[]) => Proxy m -> Proxy api -> PStruct (m (CLIResult m api))
 
 -- | Convert a <a>PStruct</a> into a command line argument parser, from the
 --   <i>optparse-applicative</i> library. It can be run with
@@ -468,3 +471,13 @@ data ParamKind
 Normal :: ParamKind
 List :: ParamKind
 Flag :: ParamKind
+
+-- | The class that helps us get documentation for authenticated endpoints
+class ToAuthInfo (a :: k)
+toAuthInfo :: ToAuthInfo a => Proxy a -> DocAuthentication
+
+-- | A type to represent Authentication information about an endpoint.
+data DocAuthentication
+DocAuthentication :: String -> String -> DocAuthentication
+[_authIntro] :: DocAuthentication -> String
+[_authDataRequired] :: DocAuthentication -> String

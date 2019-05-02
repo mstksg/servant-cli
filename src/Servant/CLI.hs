@@ -25,7 +25,7 @@
 -- Mainly used through 'parseClient' and 'parseHandleClient'.
 -- 'parseClient' returns a servant client action that returns nested
 -- 'Either's for every endpoint, but 'parseHandleClient' allows you to
--- conveniently specify how you want to combine each endpoint entry into
+-- conveniently specify how you want to sort each endpoint entry into
 -- a single result.
 module Servant.CLI (
     parseClient, parseHandleClient
@@ -63,8 +63,9 @@ cliPStruct
     -> PStruct (m (CLIResult m api))
 cliPStruct pm pa = fmap ($ defaultRequest) . cliPStruct_ pm pa
 
--- | Parse a servant client; the result can be run.  A good choice of @m@
--- is 'Servant.Client.ClientM'.
+-- | Parse a servant client; the result can be run.  The choice of @m@
+-- gives the backend you are using; for example, the default GHC
+-- /servant-client/ backend is 'Servant.Client.ClientM'.
 --
 -- Returns the request response, which is usually a layer of 'Either' for
 -- every endpoint branch.  You can find the response type directly by using
@@ -73,8 +74,9 @@ cliPStruct pm pa = fmap ($ defaultRequest) . cliPStruct_ pm pa
 -- 'parseHandleClient' for a way to handle each potential branch in
 -- a convenient way.
 --
--- Takes a 'Rec' of actions to generate required items.  Pass in 'RNil' if
--- no parameters are expected (that is, if @'CLIParam' m api@ is an empty
+-- Takes a 'Rec' of actions to generate required items that cannot be
+-- passed via the command line (like authentication).  Pass in 'RNil' if no
+-- parameters are expected (that is, if @'CLIParam' m api@ is an empty
 -- list), or use 'parseClient''.  The actions will only be run if they are
 -- needed.
 --
@@ -93,15 +95,16 @@ parseClient pa pm p im = execParser . flip structParser im $ cliPStruct pm pa p
 -- | Parse a server client, like 'parseClient'.  However, instead of that
 -- client action returning the request response, instead use a 'CLIHandler'
 -- to handle every potential request response.  It essentially lets you
--- specify how to combine each potential endpoint's response into a single
+-- specify how to sort each potential endpoint's response into a single
 -- output value.
 --
 -- The handler is usually a 'Servant.API.:<|>' for every endpoint branch.
 -- You can find it by using typed holes or asking ghci with @:t@ or @:kind!
 -- forall m r.  CLIHandler m MyAPI r@.
 --
--- Takes a 'Rec' of actions to generate required items.  Pass in 'RNil' if
--- no parameters are expected (that is, if @'CLIParam' m api@ is an empty
+-- Takes a 'Rec' of actions to generate required items that cannot be
+-- passed via the command line (like authentication).  Pass in 'RNil' if no
+-- parameters are expected (that is, if @'CLIParam' m api@ is an empty
 -- list), or use 'parseHandleClient''.  The actions will only be run if
 -- they are needed.
 --
@@ -138,7 +141,8 @@ parseClient'
     -> IO (m (CLIResult m api))
 parseClient' pa pm = parseClient pa pm RNil
 
--- | A version of 'parseHandleClient' that works when the client action requires
+-- | A version of 'parseHandleClient' that works when the client action
+-- requires no extra parameters.
 parseHandleClient'
     :: (HasCLI m api, Functor m, CLIParam m api ~ '[])
     => Proxy api                        -- ^ API

@@ -87,7 +87,7 @@ class HasCLI m api where
     -- tedious to handle the bunch of nested 'Either's that 'CLIResult'
     -- has.
     --
-    -- It essentially lets you specify how to combine each potential
+    -- It essentially lets you specify how to sort each potential
     -- endpoint's response into a single output value.
     --
     -- Usually this will be a bunch of nested ':<|>'s which handle each
@@ -102,9 +102,10 @@ class HasCLI m api where
     -- internal use; should be used through 'Servant.CLI.cliPStruct'
     -- instead.
     --
-    -- Takes a 'Rec' of actions to generate required items.  Pass in 'RNil' if
-    -- no parameters are expected (that is, if @'CLIParam' m api@ is an empty
-    -- list).  The actions will only be run if they are needed.
+    -- Takes a 'Rec' of actions to generate required items that cannot be
+    -- passed via the command line (like authentication).  Pass in 'RNil'
+    -- if no parameters are expected (that is, if @'CLIParam' m api@ is an
+    -- empty list).  The actions will only be run if they are needed.
     cliPStruct_
         :: Proxy m
         -> Proxy api
@@ -371,10 +372,7 @@ instance ( RunStreamingClient m
     cliPStruct_ pm pa _ = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
     cliHandler _ _ = ($)
 
--- | The final action will require a streaming source @a@ to be given.
--- Instead of normally parsing command line arguments into an @m a@, it
--- parses it into a @src -> m a@, awaiting a streaming source to send as
--- body.
+-- | As a part of 'CLIParam', asks for a streaming source @a@.
 instance ( ToSourceIO chunk a
          , MimeRender ctype chunk
          , FramingRender framing
@@ -516,10 +514,10 @@ instance HasCLI m subapi => HasCLI m (WithNamedContext name context subapi) wher
     cliPStruct_ pm _ = cliPStruct_ pm (Proxy @subapi)
     cliHandler pm _ = cliHandler pm (Proxy @subapi)
 
--- | Adding 'AuthProtect' means that the result of parsing command line
--- options will be a function that takes a 'AuthenticatedRequest' and
--- returns an @m@ action to make a request to the server with that
--- authentication data.
+-- | Adding 'AuthProtect' adds 'AuthenticatedRequest' to 'CLIParam', meaning a @m
+-- 'AuthenticatedRequest' ('AuthProtect' tag)@ must be provided to allow
+-- the client to generate authentication data.  The action will only be run
+-- if the user selects this endpoint via command line arguments.
 --
 -- Please use a secure connection!
 instance (HasCLI m api, Monad m) => HasCLI m (AuthProtect tag :> api) where
@@ -533,10 +531,10 @@ instance (HasCLI m api, Monad m) => HasCLI m (AuthProtect tag :> api) where
 
     cliHandler pm _ = cliHandler pm (Proxy @api)
 
--- | Adding 'BasicAuth' means that the result of parsing command line
--- options will be a function that takes a 'BasicAuthData' and returns an
--- @m@ action to make a request to the server with that authentication
--- data.
+-- | Adding 'BasicAuth' adds 'BasicAuthData' to 'CLIParam', meaning a @m
+-- 'BasicAuthData'@ must be provided to allow the client to generate
+-- authentication data.  The action will only be run if the user selects
+-- this endpoint via command line arguments.
 --
 -- Please use a secure connection!
 instance (HasCLI m api, Monad m) => HasCLI m (BasicAuth realm usr :> api) where

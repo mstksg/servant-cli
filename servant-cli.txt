@@ -2,29 +2,28 @@
 -- See Hoogle, http://www.haskell.org/hoogle/
 
 
--- | Please see the README on GitHub at
---   <a>https://github.com/mstksg/servant-cli#readme</a>
+-- | Command line interface for Servant API clients
+--   
+--   Parse command line arguments into a servant client, from a servant
+--   API.
+--   
+--   Mainly used through <a>parseClient</a> and <a>parseHandleClient</a>.
+--   <a>parseClient</a> returns a servant client action that returns nested
+--   <a>Either</a>s for every endpoint, but <a>parseHandleClient</a> allows
+--   you to conveniently specify how you want to combine each endpoint
+--   entry into a single result.
+--   
+--   Hooks into the annotation system used by <i>servant-docs</i> to
+--   provide descriptions for parameters and captures.
 @package servant-cli
 @version 0.1.0.0
 
-module Servant.CLI.ParseBody
 
--- | A helper class for defining directly how to parse request bodies. This
---   allows more complex parsing of bodies.
-class ParseBody a
-parseBody :: ParseBody a => Parser a
-parseBody :: (ParseBody a, Typeable a, Read a) => Parser a
-
--- | Default implementation that expects a <tt>--data</tt> option.
-defaultParseBody :: String -> ReadM a -> Parser a
-instance Servant.CLI.ParseBody.ParseBody Data.Text.Internal.Text
-instance Servant.CLI.ParseBody.ParseBody Data.Text.Internal.Lazy.Text
-instance Servant.CLI.ParseBody.ParseBody GHC.Types.Int
-instance Servant.CLI.ParseBody.ParseBody GHC.Integer.Type.Integer
-instance Servant.CLI.ParseBody.ParseBody GHC.Types.Float
-instance Servant.CLI.ParseBody.ParseBody GHC.Types.Double
-
-module Servant.CLI.Structure
+-- | Internal module providing a data structure for representing structure
+--   of command line parsers that can be manipulated as an ADT, as well as
+--   functionality to interpret it as a <a>Parser</a> command line argument
+--   parser.
+module Servant.CLI.PStruct
 
 -- | How to "read" an option.
 data OptRead :: Type -> Type
@@ -82,12 +81,12 @@ PStruct :: [String] -> Map String (PStruct a) -> Maybe (Captures a) -> EndpointM
 -- | captures
 [psCaptures] :: PStruct a -> Maybe (Captures a)
 [psEndpoints] :: PStruct a -> EndpointMap a
-data PStructF (a_aieb :: Type) r_aiWQ
-PStructF :: [[Char]] -> Map [Char] r_aiWQ -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_aieb) -> EndpointMap a_aieb -> PStructF r_aiWQ
-[psInfoF] :: PStructF r_aiWQ -> [[Char]]
-[psComponentsF] :: PStructF r_aiWQ -> Map [Char] r_aiWQ
-[psCapturesF] :: PStructF r_aiWQ -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_aieb)
-[psEndpointsF] :: PStructF r_aiWQ -> EndpointMap a_aieb
+data PStructF (a_agcn :: Type) r_ahf1
+PStructF :: [[Char]] -> Map [Char] r_ahf1 -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_agcn) -> EndpointMap a_agcn -> PStructF r_ahf1
+[psInfoF] :: PStructF r_ahf1 -> [[Char]]
+[psComponentsF] :: PStructF r_ahf1 -> Map [Char] r_ahf1
+[psCapturesF] :: PStructF r_ahf1 -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_agcn)
+[psEndpointsF] :: PStructF r_ahf1 -> EndpointMap a_agcn
 
 -- | Convert a <a>PStruct</a> into a command line argument parser, from the
 --   <i>optparse-applicative</i> library. It can be run with
@@ -147,46 +146,102 @@ orOptional :: ReadM a -> Coyoneda OptRead (Maybe a)
 
 -- | An <a>optRead</a> that is on-or-off.
 orSwitch :: Coyoneda OptRead Bool
-instance Data.Traversable.Traversable (Servant.CLI.Structure.PStructF a)
-instance Data.Foldable.Foldable (Servant.CLI.Structure.PStructF a)
-instance GHC.Base.Functor (Servant.CLI.Structure.PStructF a)
-instance Data.Functor.Foldable.Recursive (Servant.CLI.Structure.PStruct a)
-instance Data.Functor.Foldable.Corecursive (Servant.CLI.Structure.PStruct a)
-instance GHC.Base.Semigroup (Servant.CLI.Structure.EndpointMap a)
-instance GHC.Base.Monoid (Servant.CLI.Structure.EndpointMap a)
-instance GHC.Base.Semigroup (Servant.CLI.Structure.PStruct a)
-instance GHC.Base.Monoid (Servant.CLI.Structure.PStruct a)
-instance GHC.Base.Functor Servant.CLI.Structure.PStruct
-instance GHC.Base.Functor Servant.CLI.Structure.EndpointMap
-instance GHC.Base.Functor Servant.CLI.Structure.Endpoint
-instance GHC.Base.Functor Servant.CLI.Structure.Arg
-instance GHC.Base.Functor Servant.CLI.Structure.Opt
+instance Data.Traversable.Traversable (Servant.CLI.PStruct.PStructF a)
+instance Data.Foldable.Foldable (Servant.CLI.PStruct.PStructF a)
+instance GHC.Base.Functor (Servant.CLI.PStruct.PStructF a)
+instance Data.Functor.Foldable.Recursive (Servant.CLI.PStruct.PStruct a)
+instance Data.Functor.Foldable.Corecursive (Servant.CLI.PStruct.PStruct a)
+instance GHC.Base.Semigroup (Servant.CLI.PStruct.EndpointMap a)
+instance GHC.Base.Monoid (Servant.CLI.PStruct.EndpointMap a)
+instance GHC.Base.Semigroup (Servant.CLI.PStruct.PStruct a)
+instance GHC.Base.Monoid (Servant.CLI.PStruct.PStruct a)
+instance GHC.Base.Functor Servant.CLI.PStruct.PStruct
+instance GHC.Base.Functor Servant.CLI.PStruct.EndpointMap
+instance GHC.Base.Functor Servant.CLI.PStruct.Endpoint
+instance GHC.Base.Functor Servant.CLI.PStruct.Arg
+instance GHC.Base.Functor Servant.CLI.PStruct.Opt
 
+
+-- | Provides the interface for <a>ParseBody</a>, a helper class for
+--   defining directly how to parse request bodies.
+module Servant.CLI.ParseBody
+
+-- | A helper class for defining directly how to parse request bodies. This
+--   allows more complex parsing of bodies.
+--   
+--   You need an instance of this for every type you use with
+--   <tt>ReqBody</tt>.
+class ParseBody a
+parseBody :: ParseBody a => Parser a
+parseBody :: (ParseBody a, Typeable a, Read a) => Parser a
+
+-- | Default implementation that expects a <tt>--data</tt> option.
+defaultParseBody :: String -> ReadM a -> Parser a
+instance Servant.CLI.ParseBody.ParseBody Data.Text.Internal.Text
+instance Servant.CLI.ParseBody.ParseBody Data.Text.Internal.Lazy.Text
+instance Servant.CLI.ParseBody.ParseBody GHC.Types.Int
+instance Servant.CLI.ParseBody.ParseBody GHC.Integer.Type.Integer
+instance Servant.CLI.ParseBody.ParseBody GHC.Types.Float
+instance Servant.CLI.ParseBody.ParseBody GHC.Types.Double
+
+
+-- | Main module providing underlying functionality for the command line
+--   interface parser for servant API clients.
+--   
+--   For the most part, you can ignore this module unless you're adding new
+--   API combinators.
 module Servant.CLI.HasCLI
 
 -- | Typeclass defining how each API combinator influences how a server can
 --   be interacted with using command line options.
 --   
+--   Note that query parameters and captures all require
+--   <i>servant-docs</i> annotation instances, to allow for proper help
+--   messages.
+--   
 --   Unless you are adding new combinators to be used with APIs, you can
 --   ignore this class.
 class HasCLI m api where {
     
-    -- | The type of the API client action that the command line parser will
-    --   return. In most cases, this will be the return type of the final
-    --   endpoint action, or else an <a>Either</a> between two branches. type
-    --   CLI (m :: Type -&gt; Type) (api :: Type) :: Type
+    -- | List of extra parameters that must be generated at runtime to produce
+    --   the desired request.
+    --   
+    --   For most routes this will be an empty list, but it is non-empty for
+    --   <a>StreamBody</a>, <a>BasicAuth</a>, and <a>AuthProtect</a>.
     type family CLIParam (m :: Type -> Type) (api :: Type) :: [Type];
+    
+    -- | The parsed type of the client request response. Usually this will be a
+    --   bunch of nested <a>Either</a>s for every API endpoint, nested
+    --   according to the <a>:&lt;|&gt;</a>s in the API.
     type family CLIResult (m :: Type -> Type) (api :: Type) :: Type;
+    
+    -- | The type of a data structure to conveniently handle the results of all
+    --   pontential endpoints. This is useful because it is often tedious to
+    --   handle the bunch of nested <a>Either</a>s that <a>CLIResult</a> has.
+    --   
+    --   It essentially lets you specify how to combine each potential
+    --   endpoint's response into a single output value.
+    --   
+    --   Usually this will be a bunch of nested <a>:&lt;|&gt;</a>s which handle
+    --   each endpoint, according to the <a>:&lt;|&gt;</a>s in the API. It
+    --   mirrors the structure of <a>Client</a> and <a>ServerT</a>.
+    --   
+    --   Used with functions like <tt>parseHandleClient</tt>.
     type family CLIHandler (m :: Type -> Type) (api :: Type) (r :: Type) :: Type;
 }
 
 -- | Generate a <a>PStruct</a> showing how to modify a <a>Request</a> and
 --   perform an action, given an API and underlying monad. Only meant for
 --   internal use; should be used through <a>cliPStruct</a> instead.
+--   
+--   Takes a <a>Rec</a> of actions to generate required items. Pass in
+--   <a>RNil</a> if no parameters are expected (that is, if
+--   <tt><a>CLIParam</a> m api</tt> is an empty list). The actions will
+--   only be run if they are needed.
 cliPStruct_ :: HasCLI m api => Proxy m -> Proxy api -> Rec m (CLIParam m api) -> PStruct (Request -> m (CLIResult m api))
 
 -- | Handle all the possibilities in a <a>CLIResult</a>, by giving the
---   appropriate <a>CLIHandler</a>
+--   appropriate <a>CLIHandler</a>.
 cliHandler :: HasCLI m api => Proxy m -> Proxy api -> CLIHandler m api r -> CLIResult m api -> r
 
 -- | Un-append two <a>Rec</a>s.
@@ -214,6 +269,15 @@ instance Servant.CLI.HasCLI.HasCLI m subapi => Servant.CLI.HasCLI.HasCLI m (Serv
 instance forall k (m :: * -> *) api (tag :: k). (Servant.CLI.HasCLI.HasCLI m api, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Experimental.Auth.AuthProtect tag Servant.API.Sub.:> api)
 instance (Servant.CLI.HasCLI.HasCLI m api, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.BasicAuth.BasicAuth realm usr Servant.API.Sub.:> api)
 
+
+-- | Parse command line arguments into a servant client, from a servant
+--   API.
+--   
+--   Mainly used through <a>parseClient</a> and <a>parseHandleClient</a>.
+--   <a>parseClient</a> returns a servant client action that returns nested
+--   <a>Either</a>s for every endpoint, but <a>parseHandleClient</a> allows
+--   you to conveniently specify how you want to combine each endpoint
+--   entry into a single result.
 module Servant.CLI
 
 -- | Parse a servant client; the result can be run. A good choice of
@@ -228,8 +292,8 @@ module Servant.CLI
 --   
 --   Takes a <a>Rec</a> of actions to generate required items. Pass in
 --   <a>RNil</a> if no parameters are expected (that is, if
---   <tt><a>CLIParam</a> m api</tt> is an empty list). The actions will
---   only be run if they are needed.
+--   <tt><a>CLIParam</a> m api</tt> is an empty list), or use
+--   <a>parseClient'</a>. The actions will only be run if they are needed.
 --   
 --   Takes options on how the top-level prompt is displayed when given
 --   <tt>"--help"</tt>; it can be useful for adding a header or program
@@ -238,16 +302,19 @@ parseClient :: HasCLI m api => Proxy api -> Proxy m -> Rec m (CLIParam m api) ->
 
 -- | Parse a server client, like <a>parseClient</a>. However, instead of
 --   that client action returning the request response, instead use a
---   <a>CLIHandler</a> to handle every potential request response.
+--   <a>CLIHandler</a> to handle every potential request response. It
+--   essentially lets you specify how to combine each potential endpoint's
+--   response into a single output value.
 --   
---   The handler is usually a <tt>:&lt;|&gt;</tt> for every endpoint
---   branch. You can find it by using typed holes or asking ghci with
---   <tt>:t</tt> or <tt>:kind! forall m r. CLIHandler m MyAPI r</tt>.
+--   The handler is usually a <a>:&lt;|&gt;</a> for every endpoint branch.
+--   You can find it by using typed holes or asking ghci with <tt>:t</tt>
+--   or <tt>:kind! forall m r. CLIHandler m MyAPI r</tt>.
 --   
 --   Takes a <a>Rec</a> of actions to generate required items. Pass in
 --   <a>RNil</a> if no parameters are expected (that is, if
---   <tt><a>CLIParam</a> m api</tt> is an empty list). The actions will
---   only be run if they are needed.
+--   <tt><a>CLIParam</a> m api</tt> is an empty list), or use
+--   <a>parseHandleClient'</a>. The actions will only be run if they are
+--   needed.
 --   
 --   Takes options on how the top-level prompt is displayed when given
 --   <tt>"--help"</tt>; it can be useful for adding a header or program
@@ -265,21 +332,43 @@ parseHandleClient' :: (HasCLI m api, Functor m, CLIParam m api ~ '[]) => Proxy a
 -- | Typeclass defining how each API combinator influences how a server can
 --   be interacted with using command line options.
 --   
+--   Note that query parameters and captures all require
+--   <i>servant-docs</i> annotation instances, to allow for proper help
+--   messages.
+--   
 --   Unless you are adding new combinators to be used with APIs, you can
 --   ignore this class.
 class HasCLI m api where {
     
-    -- | The type of the API client action that the command line parser will
-    --   return. In most cases, this will be the return type of the final
-    --   endpoint action, or else an <a>Either</a> between two branches. type
-    --   CLI (m :: Type -&gt; Type) (api :: Type) :: Type
+    -- | List of extra parameters that must be generated at runtime to produce
+    --   the desired request.
+    --   
+    --   For most routes this will be an empty list, but it is non-empty for
+    --   <a>StreamBody</a>, <a>BasicAuth</a>, and <a>AuthProtect</a>.
     type family CLIParam (m :: Type -> Type) (api :: Type) :: [Type];
+    
+    -- | The parsed type of the client request response. Usually this will be a
+    --   bunch of nested <a>Either</a>s for every API endpoint, nested
+    --   according to the <a>:&lt;|&gt;</a>s in the API.
     type family CLIResult (m :: Type -> Type) (api :: Type) :: Type;
+    
+    -- | The type of a data structure to conveniently handle the results of all
+    --   pontential endpoints. This is useful because it is often tedious to
+    --   handle the bunch of nested <a>Either</a>s that <a>CLIResult</a> has.
+    --   
+    --   It essentially lets you specify how to combine each potential
+    --   endpoint's response into a single output value.
+    --   
+    --   Usually this will be a bunch of nested <a>:&lt;|&gt;</a>s which handle
+    --   each endpoint, according to the <a>:&lt;|&gt;</a>s in the API. It
+    --   mirrors the structure of <a>Client</a> and <a>ServerT</a>.
+    --   
+    --   Used with functions like <tt>parseHandleClient</tt>.
     type family CLIHandler (m :: Type -> Type) (api :: Type) (r :: Type) :: Type;
 }
 
 -- | Handle all the possibilities in a <a>CLIResult</a>, by giving the
---   appropriate <a>CLIHandler</a>
+--   appropriate <a>CLIHandler</a>.
 cliHandler :: HasCLI m api => Proxy m -> Proxy api -> CLIHandler m api r -> CLIResult m api -> r
 
 -- | Create a structure for a command line parser.
@@ -305,6 +394,9 @@ structParser :: PStruct a -> InfoMod a -> ParserInfo a
 
 -- | A helper class for defining directly how to parse request bodies. This
 --   allows more complex parsing of bodies.
+--   
+--   You need an instance of this for every type you use with
+--   <tt>ReqBody</tt>.
 class ParseBody a
 parseBody :: ParseBody a => Parser a
 parseBody :: (ParseBody a, Typeable a, Read a) => Parser a
@@ -360,6 +452,21 @@ DocQueryParam :: String -> [String] -> String -> ParamKind -> DocQueryParam
 [_paramValues] :: DocQueryParam -> [String]
 [_paramDesc] :: DocQueryParam -> String
 [_paramKind] :: DocQueryParam -> ParamKind
+
+-- | Type of GET (or other <a>Method</a>) parameter:
+--   
+--   <ul>
+--   <li>Normal corresponds to <tt>QueryParam</tt>, i.e your usual GET
+--   parameter</li>
+--   <li>List corresponds to <tt>QueryParams</tt>, i.e GET parameters with
+--   multiple values</li>
+--   <li>Flag corresponds to <tt>QueryFlag</tt>, i.e a value-less GET
+--   parameter</li>
+--   </ul>
+data ParamKind
+Normal :: ParamKind
+List :: ParamKind
+Flag :: ParamKind
 
 -- | A record is parameterized by a universe <tt>u</tt>, an interpretation
 --   <tt>f</tt> and a list of rows <tt>rs</tt>. The labels or indices of

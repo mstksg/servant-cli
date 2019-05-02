@@ -15,6 +15,8 @@
 --   
 --   Hooks into the annotation system used by <i>servant-docs</i> to
 --   provide descriptions for parameters and captures.
+--   
+--   See <tt>example/greet.hs</tt> for an example usage.
 @package servant-cli
 @version 0.1.0.0
 

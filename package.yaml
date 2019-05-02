@@ -63,8 +63,6 @@ executables:
     - servant-cli
     - servant-client
     - servant-server
-    - string-conversions
     - text
     - warp
     - http-client
-

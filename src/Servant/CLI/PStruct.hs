@@ -54,7 +54,6 @@ import           Data.Kind
 import           Data.List.NonEmpty              (NonEmpty(..))
 import           Data.Map                        (Map)
 import           Data.Maybe
-import           Data.Type.Equality
 import           GHC.Generics
 import           Options.Applicative
 import           System.FilePath
@@ -99,7 +98,7 @@ data MultiArg :: Type -> Type where
 -- "raw" endpoint.
 data EndpointMap a = EPM
     { epmGiven :: Map HTTP.Method (Endpoint a)
-    , epmRaw   :: Maybe (Day ((:~:) HTTP.Method) Endpoint a)
+    , epmRaw   :: Maybe (Endpoint (HTTP.Method -> a))
     }
   deriving Functor
 
@@ -218,15 +217,15 @@ structParser_ = cata go
                                           <*> b
     pickMethod :: HTTP.Method -> Parser x -> Mod CommandFields x
     pickMethod m p = command (T.unpack . T.decodeUtf8 $ m) $ info (p <**> helper) mempty
-    mkRaw :: Day ((:~:) HTTP.Method) Endpoint x -> Parser x
-    mkRaw (Day Refl e f) = flip f <$> mkEndpoint e <*> o
+    mkRaw :: Endpoint (HTTP.Method -> x) -> Parser x
+    mkRaw e = mkEndpoint e <*> o
       where
         o = strOption @HTTP.Method $
               long "method"
            <> help "method for raw request (GET, POST, etc.)"
            <> metavar "METHOD"
            <> completeWith (show <$> [HTTP.GET ..])
-    mkRawCommand :: Day ((:~:) HTTP.Method) Endpoint x -> Mod CommandFields x
+    mkRawCommand :: Endpoint (HTTP.Method -> x) -> Mod CommandFields x
     mkRawCommand d = command "RAW" $ info (mkRaw d <**> helper) mempty
 
 -- | Combine two 'EndpointMap's, preferring the left hand side for
@@ -302,9 +301,7 @@ addEPMOpt :: Opt a -> EndpointMap (a -> b) -> EndpointMap b
 addEPMOpt o (EPM e r) = EPM e' r'
   where
     e' = addEndpointOpt o <$> e
-    r' = r <&> \(Day rr re rf) ->
-          let f' x y z = rf z x y
-          in  Day rr (addEndpointOpt o (f' <$> re)) (&)
+    r' = addEndpointOpt o . fmap flip <$> r
 
 -- | Add a note.
 note :: String -> PStruct a -> PStruct a
@@ -347,9 +344,7 @@ addEPMBody :: Parser a -> EndpointMap (a -> b) -> EndpointMap b
 addEPMBody b (EPM e r) = EPM e' r'
   where
     e' = addEndpointBody b <$> e
-    r' = r <&> \(Day rr re rf) ->
-          let f' x y z = rf z x y
-          in  Day rr (addEndpointBody b (f' <$> re)) (&)
+    r' = addEndpointBody b . fmap flip <$> r
 
 -- | Create an endpoint action.
 endpoint :: HTTP.Method -> a -> PStruct a
@@ -360,7 +355,7 @@ endpoint m x = mempty
 -- | Create a raw endpoint.
 rawEndpoint :: (HTTP.Method -> a) -> PStruct a
 rawEndpoint f = mempty
-    { psEndpoints = EPM M.empty (Just (Day Refl (Endpoint (pure ())) (\m _ -> f m)))
+    { psEndpoints = EPM M.empty (Just (Endpoint (pure f)))
     }
 
 -- | Helper to lift a 'ReadM' into something that can be used with 'optRead'.

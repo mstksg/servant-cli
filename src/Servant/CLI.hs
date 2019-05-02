@@ -31,7 +31,7 @@ module Servant.CLI (
     parseClient, parseHandleClient
   , parseClient', parseHandleClient'
   -- * Typeclasses
-  , HasCLI (CLIParam, CLIResult, CLIHandler, cliHandler)
+  , HasCLI (CLIContext, CLIResult, CLIHandler, cliHandler)
   -- * Lower-level
   , cliPStruct, cliPStruct'
   , structParser
@@ -39,6 +39,7 @@ module Servant.CLI (
   , ParseBody(..), defaultParseBody
   , ToCapture(..), DocCapture(..)
   , ToParam(..), DocQueryParam(..), ParamKind(..)
+  , ToAuthInfo(..), DocAuthentication(..)
   ) where
 
 import           Data.Proxy
@@ -48,18 +49,18 @@ import           Servant.CLI.HasCLI
 import           Servant.CLI.PStruct
 import           Servant.CLI.ParseBody
 import           Servant.Client.Core
-import           Servant.Docs
+import           Servant.Docs.Internal
 
 -- | Create a structure for a command line parser.
 --
 -- Takes a 'Rec' of actions to generate required items.  Pass in 'RNil' if
--- no parameters are expected (that is, if @'CLIParam' m api@ is an empty
--- list).  The actions will only be run if they are needed.
+-- no extra context is expected (that is, if @'CLIContext' m api@ is an
+-- empty list).  The actions will only be run if they are needed.
 cliPStruct
     :: HasCLI m api
     => Proxy m                          -- ^ Client monad
     -> Proxy api                        -- ^ API
-    -> Rec m (CLIParam m api)           -- ^ Extra parameters
+    -> Rec m (CLIContext m api)         -- ^ Extra context
     -> PStruct (m (CLIResult m api))
 cliPStruct pm pa = fmap ($ defaultRequest) . cliPStruct_ pm pa
 
@@ -76,7 +77,7 @@ cliPStruct pm pa = fmap ($ defaultRequest) . cliPStruct_ pm pa
 --
 -- Takes a 'Rec' of actions to generate required items that cannot be
 -- passed via the command line (like authentication).  Pass in 'RNil' if no
--- parameters are expected (that is, if @'CLIParam' m api@ is an empty
+-- context is expected (that is, if @'CLIContext' m api@ is an empty
 -- list), or use 'parseClient''.  The actions will only be run if they are
 -- needed.
 --
@@ -87,7 +88,7 @@ parseClient
     :: HasCLI m api
     => Proxy api                        -- ^ API
     -> Proxy m                          -- ^ Client monad
-    -> Rec m (CLIParam m api)           -- ^ Extra parameters
+    -> Rec m (CLIContext m api)         -- ^ Extra context
     -> InfoMod (m (CLIResult m api))    -- ^ Options for top-level display
     -> IO (m (CLIResult m api))
 parseClient pa pm p im = execParser . flip structParser im $ cliPStruct pm pa p
@@ -104,7 +105,7 @@ parseClient pa pm p im = execParser . flip structParser im $ cliPStruct pm pa p
 --
 -- Takes a 'Rec' of actions to generate required items that cannot be
 -- passed via the command line (like authentication).  Pass in 'RNil' if no
--- parameters are expected (that is, if @'CLIParam' m api@ is an empty
+-- context is expected (that is, if @'CLIContext' m api@ is an empty
 -- list), or use 'parseHandleClient''.  The actions will only be run if
 -- they are needed.
 --
@@ -115,7 +116,7 @@ parseHandleClient
     :: (HasCLI m api, Functor m)
     => Proxy api                        -- ^ API
     -> Proxy m                          -- ^ Client monad
-    -> Rec m (CLIParam m api)           -- ^ Extra parameters
+    -> Rec m (CLIContext m api)         -- ^ Extra context
     -> InfoMod (m (CLIResult m api))    -- ^ Options for top-level display
     -> CLIHandler m api r               -- ^ Handler
     -> IO (m r)
@@ -123,18 +124,18 @@ parseHandleClient pa pm p im h =
     fmap (cliHandler pm pa h) <$> parseClient pa pm p im
 
 -- | A version of 'cliPStruct' that works when the client action requires
--- no extra parameters.
+-- no extra context.
 cliPStruct'
-    :: (HasCLI m api, CLIParam m api ~ '[])
+    :: (HasCLI m api, CLIContext m api ~ '[])
     => Proxy m                          -- ^ Client monad
     -> Proxy api                        -- ^ API
     -> PStruct (m (CLIResult m api))
 cliPStruct' pm pa = cliPStruct pm pa RNil
 
 -- | A version of 'parseClient' that works when the client action requires
--- no extra parameters.
+-- no extra context.
 parseClient'
-    :: (HasCLI m api, CLIParam m api ~ '[])
+    :: (HasCLI m api, CLIContext m api ~ '[])
     => Proxy api                        -- ^ API
     -> Proxy m                          -- ^ Client monad
     -> InfoMod (m (CLIResult m api))    -- ^ Options for top-level display
@@ -142,9 +143,9 @@ parseClient'
 parseClient' pa pm = parseClient pa pm RNil
 
 -- | A version of 'parseHandleClient' that works when the client action
--- requires no extra parameters.
+-- requires no extra context.
 parseHandleClient'
-    :: (HasCLI m api, Functor m, CLIParam m api ~ '[])
+    :: (HasCLI m api, Functor m, CLIContext m api ~ '[])
     => Proxy api                        -- ^ API
     -> Proxy m                          -- ^ Client monad
     -> InfoMod (m (CLIResult m api))    -- ^ Options for top-level display

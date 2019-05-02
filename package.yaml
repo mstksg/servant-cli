@@ -58,11 +58,15 @@ executables:
     dependencies:
     - aeson
     - base >= 4.7 && < 5
+    - bytestring
+    - containers
+    - http-client
     - optparse-applicative
+    - random
     - servant
     - servant-cli
     - servant-client
     - servant-server
     - text
+    - vinyl
     - warp
-    - http-client

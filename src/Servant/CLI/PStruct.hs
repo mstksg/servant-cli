@@ -152,7 +152,11 @@ structParser_
     -> ParserInfo a
 structParser_ = cata go
   where
-    go :: PStructF x (Bool -> [String] -> InfoMod x -> ParserInfo x) -> Bool -> [String] -> InfoMod x -> ParserInfo x
+    go  :: PStructF x (Bool -> [String] -> InfoMod x -> ParserInfo x)
+        -> Bool
+        -> [String]
+        -> InfoMod x
+        -> ParserInfo x
     go PStructF{..} toHelp p im = info ((subp <|> cap <|> ep) <**> mkHelp) $
            fullDesc
         <> header (joinPath p)
@@ -213,8 +217,7 @@ structParser_ = cata go
       where
         epMap = mkEndpoint <$> eps
     mkEndpoint :: Endpoint x -> Parser x
-    mkEndpoint (Endpoint (Day o b f)) = f <$> runAp mkOpt o
-                                          <*> b
+    mkEndpoint = dap . trans1 (runAp mkOpt) . epStruct
     pickMethod :: HTTP.Method -> Parser x -> Mod CommandFields x
     pickMethod m p = command (T.unpack . T.decodeUtf8 $ m) $ info (p <**> helper) mempty
     mkRaw :: Endpoint (HTTP.Method -> x) -> Parser x
@@ -303,9 +306,9 @@ addEPMOpt o (EPM e r) = EPM e' r'
     e' = addEndpointOpt o <$> e
     r' = addEndpointOpt o . fmap flip <$> r
 
--- | Add a note.
-note :: String -> PStruct a -> PStruct a
-note n (PStruct ns cs c ep) = PStruct (n : ns) cs c ep
+-- | Add notes to the beginning of a documentation level.
+note :: [String] -> PStruct a -> PStruct a
+note ns (PStruct ms cs c ep) = PStruct (ns ++ ms) cs c ep
 infixr 4 `note`
 
 -- | Add a single argument praser.
@@ -320,8 +323,11 @@ a ##:> p = mempty
     }
 infixr 4 ##:>
 
--- | Add a request body to all endpoints.  NOTE!!!!! UNDEFINED BEHAVIOR IF
--- DONE MORE THAN ONCE?
+-- | Add a request body to all endpoints.
+--
+-- If done more than once per endpoint, it runs *both* parsers; however,
+-- we can only send one request body, so this is undefined behavior as
+-- a client.
 (%:>) :: Parser a -> PStruct (a -> b) -> PStruct b
 b %:> PStruct ns cs c ep = PStruct ns cs' c' ep'
   where

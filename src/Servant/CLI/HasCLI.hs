@@ -16,39 +16,34 @@
 module Servant.CLI.HasCLI (
     HasCLI(..)
   -- * Utility
-  -- , takeRec
-  -- , dropRec
+  , splitRec
   ) where
 
-import           Control.Monad
 import           Data.Bifunctor
 import           Data.Char
 import           Data.Function
-import           Data.Functor
 import           Data.Kind
 import           Data.List
 import           Data.Profunctor
 import           Data.Proxy
-import           Data.Vinyl hiding      (rmap)
-import           Data.Vinyl.Core hiding (rmap)
-import           Data.Vinyl.Functor
+import           Data.Vinyl hiding     (rmap)
 import           Data.Vinyl.TypeLevel
 import           Data.Void
-import           GHC.TypeLits hiding    (Mod)
+import           GHC.TypeLits hiding   (Mod)
 import           Options.Applicative
-import           Servant.API hiding     (addHeader, HList)
+import           Servant.API hiding    (addHeader, HList)
 import           Servant.API.Modifiers
 import           Servant.CLI.ParseBody
 import           Servant.CLI.Structure
 import           Servant.Client.Core
-import           Servant.Docs hiding    (Endpoint, Response)
+import           Servant.Docs hiding   (Endpoint, Response)
 import           Text.Printf
 import           Type.Reflection
-import qualified Data.ByteString.Lazy   as BSL
-import qualified Data.CaseInsensitive   as CI
-import qualified Data.List.NonEmpty     as NE
-import qualified Data.Text              as T
-import qualified Data.Text.Encoding     as T
+import qualified Data.ByteString.Lazy  as BSL
+import qualified Data.CaseInsensitive  as CI
+import qualified Data.List.NonEmpty    as NE
+import qualified Data.Text             as T
+import qualified Data.Text.Encoding    as T
 
 
 -- | Typeclass defining how each API combinator influences how a server can

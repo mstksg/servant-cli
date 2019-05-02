@@ -9,21 +9,19 @@ copyright:           "(c) Justin Le 2019"
 extra-source-files:
 - README.md
 - CHANGELOG.md
-- example/greet.hs
 
 synopsis:            Command line interface for Servant API clients
 category:            Web
 
 description: |
-  Parse command line arguments into a servant client, from a servant API.
-
-  Mainly used through 'parseClient' and 'parseHandleClient'. 'parseClient'
-  returns a servant client action that returns nested 'Either's for every
-  endpoint, but 'parseHandleClient' allows you to conveniently specify how you
-  want to combine each endpoint entry into a single result.
+  Parse command line arguments into a servant client, from a servant API,
+  using /optparse-applicative/ for parsing, displaying help, and
+  auto-completion.
 
   Hooks into the annotation system used by /servant-docs/ to provide descriptions
   for parameters and captures.
+
+  See @example/greet.hs@ for an example usage.
 
 ghc-options:
 - -Wall
@@ -32,23 +30,41 @@ ghc-options:
 - -Wredundant-constraints
 - -Werror=incomplete-patterns
 
-dependencies:
-- base >= 4.7 && < 5
-- bytestring
-- containers
-- filepath
-- free
-- http-types
-- case-insensitive
-- kan-extensions
-- optparse-applicative
-- profunctors
-- recursion-schemes
-- servant
-- servant-client-core
-- servant-docs
-- vinyl
-- text
 
 library:
   source-dirs: src
+  dependencies:
+  - base >= 4.7 && < 5
+  - bytestring
+  - case-insensitive
+  - containers
+  - filepath
+  - free
+  - http-types
+  - kan-extensions
+  - optparse-applicative
+  - profunctors
+  - recursion-schemes
+  - servant
+  - servant-client-core
+  - servant-docs
+  - text
+  - vinyl
+
+executables:
+  greet-cli:
+    main:                greet.hs
+    source-dirs:         example
+    dependencies:
+    - aeson
+    - base >= 4.7 && < 5
+    - optparse-applicative
+    - servant
+    - servant-cli
+    - servant-client
+    - servant-server
+    - string-conversions
+    - text
+    - warp
+    - http-client
+

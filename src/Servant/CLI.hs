@@ -39,7 +39,6 @@ module Servant.CLI (
   , ParseBody(..), defaultParseBody
   , ToCapture(..), DocCapture(..)
   , ToParam(..), DocQueryParam(..), ParamKind(..)
-  , Rec(..)
   ) where
 
 import           Data.Proxy

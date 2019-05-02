@@ -216,8 +216,8 @@ class HasCLI m api where {
     --   pontential endpoints. This is useful because it is often tedious to
     --   handle the bunch of nested <a>Either</a>s that <a>CLIResult</a> has.
     --   
-    --   It essentially lets you specify how to combine each potential
-    --   endpoint's response into a single output value.
+    --   It essentially lets you specify how to sort each potential endpoint's
+    --   response into a single output value.
     --   
     --   Usually this will be a bunch of nested <a>:&lt;|&gt;</a>s which handle
     --   each endpoint, according to the <a>:&lt;|&gt;</a>s in the API. It
@@ -231,7 +231,8 @@ class HasCLI m api where {
 --   perform an action, given an API and underlying monad. Only meant for
 --   internal use; should be used through <a>cliPStruct</a> instead.
 --   
---   Takes a <a>Rec</a> of actions to generate required items. Pass in
+--   Takes a <a>Rec</a> of actions to generate required items that cannot
+--   be passed via the command line (like authentication). Pass in
 --   <a>RNil</a> if no parameters are expected (that is, if
 --   <tt><a>CLIParam</a> m api</tt> is an empty list). The actions will
 --   only be run if they are needed.
@@ -273,12 +274,13 @@ instance (Servant.CLI.HasCLI.HasCLI m api, GHC.Base.Monad m) => Servant.CLI.HasC
 --   Mainly used through <a>parseClient</a> and <a>parseHandleClient</a>.
 --   <a>parseClient</a> returns a servant client action that returns nested
 --   <a>Either</a>s for every endpoint, but <a>parseHandleClient</a> allows
---   you to conveniently specify how you want to combine each endpoint
---   entry into a single result.
+--   you to conveniently specify how you want to sort each endpoint entry
+--   into a single result.
 module Servant.CLI
 
--- | Parse a servant client; the result can be run. A good choice of
---   <tt>m</tt> is <a>ClientM</a>.
+-- | Parse a servant client; the result can be run. The choice of
+--   <tt>m</tt> gives the backend you are using; for example, the default
+--   GHC <i>servant-client</i> backend is <a>ClientM</a>.
 --   
 --   Returns the request response, which is usually a layer of
 --   <a>Either</a> for every endpoint branch. You can find the response
@@ -287,7 +289,8 @@ module Servant.CLI
 --   tedious handling nested <a>Either</a>s, see <a>parseHandleClient</a>
 --   for a way to handle each potential branch in a convenient way.
 --   
---   Takes a <a>Rec</a> of actions to generate required items. Pass in
+--   Takes a <a>Rec</a> of actions to generate required items that cannot
+--   be passed via the command line (like authentication). Pass in
 --   <a>RNil</a> if no parameters are expected (that is, if
 --   <tt><a>CLIParam</a> m api</tt> is an empty list), or use
 --   <a>parseClient'</a>. The actions will only be run if they are needed.
@@ -300,14 +303,15 @@ parseClient :: HasCLI m api => Proxy api -> Proxy m -> Rec m (CLIParam m api) ->
 -- | Parse a server client, like <a>parseClient</a>. However, instead of
 --   that client action returning the request response, instead use a
 --   <a>CLIHandler</a> to handle every potential request response. It
---   essentially lets you specify how to combine each potential endpoint's
+--   essentially lets you specify how to sort each potential endpoint's
 --   response into a single output value.
 --   
 --   The handler is usually a <a>:&lt;|&gt;</a> for every endpoint branch.
 --   You can find it by using typed holes or asking ghci with <tt>:t</tt>
 --   or <tt>:kind! forall m r. CLIHandler m MyAPI r</tt>.
 --   
---   Takes a <a>Rec</a> of actions to generate required items. Pass in
+--   Takes a <a>Rec</a> of actions to generate required items that cannot
+--   be passed via the command line (like authentication). Pass in
 --   <a>RNil</a> if no parameters are expected (that is, if
 --   <tt><a>CLIParam</a> m api</tt> is an empty list), or use
 --   <a>parseHandleClient'</a>. The actions will only be run if they are
@@ -323,7 +327,7 @@ parseHandleClient :: (HasCLI m api, Functor m) => Proxy api -> Proxy m -> Rec m 
 parseClient' :: (HasCLI m api, CLIParam m api ~ '[]) => Proxy api -> Proxy m -> InfoMod (m (CLIResult m api)) -> IO (m (CLIResult m api))
 
 -- | A version of <a>parseHandleClient</a> that works when the client
---   action requires
+--   action requires no extra parameters.
 parseHandleClient' :: (HasCLI m api, Functor m, CLIParam m api ~ '[]) => Proxy api -> Proxy m -> InfoMod (m (CLIResult m api)) -> CLIHandler m api r -> IO (m r)
 
 -- | Typeclass defining how each API combinator influences how a server can
@@ -353,8 +357,8 @@ class HasCLI m api where {
     --   pontential endpoints. This is useful because it is often tedious to
     --   handle the bunch of nested <a>Either</a>s that <a>CLIResult</a> has.
     --   
-    --   It essentially lets you specify how to combine each potential
-    --   endpoint's response into a single output value.
+    --   It essentially lets you specify how to sort each potential endpoint's
+    --   response into a single output value.
     --   
     --   Usually this will be a bunch of nested <a>:&lt;|&gt;</a>s which handle
     --   each endpoint, according to the <a>:&lt;|&gt;</a>s in the API. It

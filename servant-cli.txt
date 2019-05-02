@@ -5,13 +5,8 @@
 -- | Command line interface for Servant API clients
 --   
 --   Parse command line arguments into a servant client, from a servant
---   API.
---   
---   Mainly used through <a>parseClient</a> and <a>parseHandleClient</a>.
---   <a>parseClient</a> returns a servant client action that returns nested
---   <a>Either</a>s for every endpoint, but <a>parseHandleClient</a> allows
---   you to conveniently specify how you want to combine each endpoint
---   entry into a single result.
+--   API, using <i>optparse-applicative</i> for parsing, displaying help,
+--   and auto-completion.
 --   
 --   Hooks into the annotation system used by <i>servant-docs</i> to
 --   provide descriptions for parameters and captures.
@@ -469,13 +464,3 @@ data ParamKind
 Normal :: ParamKind
 List :: ParamKind
 Flag :: ParamKind
-
--- | A record is parameterized by a universe <tt>u</tt>, an interpretation
---   <tt>f</tt> and a list of rows <tt>rs</tt>. The labels or indices of
---   the record are given by inhabitants of the kind <tt>u</tt>; the type
---   of values at any label <tt>r :: u</tt> is given by its interpretation
---   <tt>f r :: *</tt>.
-data Rec (a :: u -> Type) (b :: [u]) :: forall u. () => u -> Type -> [u] -> Type
-[RNil] :: forall u (a :: u -> Type) (b :: [u]). () => Rec a ([] :: [u])
-[:&] :: forall u (a :: u -> Type) (b :: [u]) (r :: u) (rs :: [u]). () => !a r -> !Rec a rs -> Rec a (r : rs)
-infixr 7 :&

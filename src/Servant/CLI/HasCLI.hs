@@ -28,9 +28,14 @@
 -- For the most part, you can ignore this module unless you're adding new
 -- API combinators.
 module Servant.CLI.HasCLI (
+  -- * Class
     HasCLI(..)
-  -- * Utility
-  , splitRec
+  -- * Context
+  , GenStreamBody(..)
+  , GenAuthReq(..)
+  , GenBasicAuthData(..)
+  , NamedContext(..)
+  , descendIntoNamedContext
   ) where
 
 import           Data.Bifunctor
@@ -41,7 +46,7 @@ import           Data.List
 import           Data.Profunctor
 import           Data.Proxy
 import           Data.Vinyl hiding            (rmap)
-import           Data.Vinyl.TypeLevel
+import           Data.Vinyl.Functor
 import           Data.Void
 import           GHC.TypeLits hiding          (Mod)
 import           Options.Applicative
@@ -68,14 +73,14 @@ import qualified Data.Text.Encoding           as T
 --
 -- Unless you are adding new combinators to be used with APIs, you can
 -- ignore this class.
-class HasCLI m api where
+class HasCLI m api ctx where
 
-    -- | List of extra parameters that must be generated at runtime to
-    -- produce the desired request.
-    --
-    -- For most routes this will be an empty list, but it is non-empty for
-    -- 'StreamBody', 'BasicAuth', and 'AuthProtect'.
-    type CLIContext (m :: Type -> Type) (api :: Type) :: [Type]
+    ---- | List of extra parameters that must be generated at runtime to
+    ---- produce the desired request.
+    ----
+    ---- For most routes this will be an empty list, but it is non-empty for
+    ---- 'StreamBody', 'BasicAuth', and 'AuthProtect'.
+    --type CLIContext (m :: Type -> Type) (api :: Type) :: [Type]
 
     -- | The parsed type of the client request response.  Usually this will
     -- be a bunch of nested 'Either's for every API endpoint, nested
@@ -106,10 +111,10 @@ class HasCLI m api where
     -- passed via the command line (like authentication).  Pass in 'RNil'
     -- if no parameters are expected (that is, if @'CLIContext' m api@ is an
     -- empty list).  The actions will only be run if they are needed.
-    cliPStruct_
+    cliPStructWithContext_
         :: Proxy m
         -> Proxy api
-        -> Rec m (CLIContext m api)
+        -> HList ctx
         -> PStruct (Request -> m (CLIResult m api))
 
     -- | Handle all the possibilities in a 'CLIResult', by giving the
@@ -117,6 +122,7 @@ class HasCLI m api where
     cliHandler
         :: Proxy m
         -> Proxy api
+        -> Proxy ctx
         -> CLIHandler m api r
         -> CLIResult m api
         -> r
@@ -128,51 +134,38 @@ class HasCLI m api where
 -- 'EmptyAPI'.
 --
 -- One can use 'absurd' to handle this branch as a part of 'CLIHandler'.
-instance HasCLI m EmptyAPI where
-    type CLIContext m EmptyAPI   = '[]
+instance HasCLI m EmptyAPI ctx where
     type CLIResult  m EmptyAPI   = Void
     type CLIHandler m EmptyAPI r = Void -> r
 
-    cliPStruct_ _ _ _ = mempty
-    cliHandler  _ _ = ($)
-
--- | Un-append two 'Rec's.
-splitRec
-   :: forall as bs g. RecApplicative as
-   => Rec g (as ++ bs)
-   -> (Rec g as, Rec g bs)
-splitRec = go (rpure Proxy)
-  where
-    go  :: Rec Proxy cs -> Rec g (cs ++ bs) -> (Rec g cs, Rec g bs)
-    go = \case
-      RNil    -> (RNil,)
-      _ :& ps -> \case
-        x :& xs -> first (x :&) . go ps $ xs
+    cliPStructWithContext_ _ _ _ = mempty
+    cliHandler  _ _ _ = ($)
 
 -- | Using alternation with ':<|>' provides an 'Either' between the two
 -- results.
-instance (HasCLI m a, HasCLI m b, Functor m, RecApplicative (CLIContext m a)) => HasCLI m (a :<|> b) where
-    type CLIContext m (a :<|> b)   = CLIContext m a ++ CLIContext m b
+instance ( HasCLI m a ctx
+         , HasCLI m b ctx
+         , Functor m
+         ) => HasCLI m (a :<|> b) ctx where
     type CLIResult  m (a :<|> b)   = Either (CLIResult m a) (CLIResult m b)
     type CLIHandler m (a :<|> b) r = CLIHandler m a r :<|> CLIHandler m b r
 
-    cliPStruct_ pm _ (splitRec->(pA,pB)) =
-          dig Left  (cliPStruct_ pm (Proxy @a) pA)
-       <> dig Right (cliPStruct_ pm (Proxy @b) pB)
+    cliPStructWithContext_ pm _ p =
+          dig Left  (cliPStructWithContext_ pm (Proxy @a) p)
+       <> dig Right (cliPStructWithContext_ pm (Proxy @b) p)
       where
         dig = fmap . rmap . fmap
 
-    cliHandler pm _ (hA :<|> hB) = either (cliHandler pm (Proxy @a) hA)
-                                             (cliHandler pm (Proxy @b) hB)
+    cliHandler pm _ pc (hA :<|> hB) = either (cliHandler pm (Proxy @a) pc hA)
+                                             (cliHandler pm (Proxy @b) pc hB)
 
 -- | A path component is interpreted as a "subcommand".
-instance (KnownSymbol path, HasCLI m api) => HasCLI m (path :> api) where
-    type CLIContext m (path :> api)   = CLIContext m api
+instance (KnownSymbol path, HasCLI m api ctx) => HasCLI m (path :> api) ctx where
     type CLIResult  m (path :> api)   = CLIResult m api
     type CLIHandler m (path :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ p = pathstr $:>
-        (fmap . lmap) (appendToPath (T.pack pathstr)) (cliPStruct_ pm (Proxy @api) p)
+    cliPStructWithContext_ pm _ p = pathstr $:>
+        (fmap . lmap) (appendToPath (T.pack pathstr)) (cliPStructWithContext_ pm (Proxy @api) p)
       where
         pathstr = symbolVal (Proxy @path)
 
@@ -186,14 +179,13 @@ instance ( FromHttpApiData a
          , ToHttpApiData a
          , Typeable a
          , ToCapture (Capture sym a)
-         , HasCLI m api
-         ) => HasCLI m (Capture' mods sym a :> api) where
-    type CLIContext m (Capture' mods sym a :> api)   = CLIContext m api
+         , HasCLI m api ctx
+         ) => HasCLI m (Capture' mods sym a :> api) ctx where
     type CLIResult  m (Capture' mods sym a :> api)   = CLIResult m api
     type CLIHandler m (Capture' mods sym a :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ p = arg #:>
-        fmap (.: addCapture) (cliPStruct_ pm (Proxy @api) p)
+    cliPStructWithContext_ pm _ p = arg #:>
+        fmap (.: addCapture) (cliPStructWithContext_ pm (Proxy @api) p)
       where
         addCapture = appendToPath . toUrlPiece
         arg = Arg
@@ -214,14 +206,13 @@ instance ( FromHttpApiData a
          , ToHttpApiData a
          , Typeable a
          , ToCapture (CaptureAll sym a)
-         , HasCLI m api
-         ) => HasCLI m (CaptureAll sym a :> api) where
-    type CLIContext m (CaptureAll sym a :> api)   = CLIContext m api
+         , HasCLI m api ctx
+         ) => HasCLI m (CaptureAll sym a :> api) ctx where
     type CLIResult  m (CaptureAll sym a :> api)   = CLIResult m api
     type CLIHandler m (CaptureAll sym a :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ p = arg ##:>
-        fmap (.: addCapture) (cliPStruct_ pm (Proxy @api) p)
+    cliPStructWithContext_ pm _ p = arg ##:>
+        fmap (.: addCapture) (cliPStructWithContext_ pm (Proxy @api) p)
       where
         addCapture ps req = foldl' (flip appendToPath) req (map toUrlPiece ps)
         arg = Arg
@@ -249,14 +240,13 @@ instance ( KnownSymbol sym
          , SBoolI (FoldRequired' 'False mods)
          , Typeable a
          , ToParam (QueryParam' mods sym a)
-         , HasCLI m api
-         ) => HasCLI m (QueryParam' mods sym a :> api) where
-    type CLIContext m (QueryParam' mods sym a :> api)   = CLIContext m api
+         , HasCLI m api ctx
+         ) => HasCLI m (QueryParam' mods sym a :> api) ctx where
     type CLIResult  m (QueryParam' mods sym a :> api)   = CLIResult m api
     type CLIHandler m (QueryParam' mods sym a :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ p = opt ?:>
-        fmap (.: addParam) (cliPStruct_ pm (Proxy @api) p)
+    cliPStructWithContext_ pm _ p = opt ?:>
+        fmap (.: addParam) (cliPStructWithContext_ pm (Proxy @api) p)
       where
         addParam :: RequiredArgument mods a -> Request -> Request
         addParam = foldRequiredArgument (Proxy @mods) add (maybe id add)
@@ -292,14 +282,13 @@ instance ( KnownSymbol sym
 -- provide appropriate help messages.
 instance ( KnownSymbol sym
          , ToParam (QueryFlag sym)
-         , HasCLI m api
-         ) => HasCLI m (QueryFlag sym :> api) where
-    type CLIContext m (QueryFlag sym :> api)   = CLIContext m api
+         , HasCLI m api ctx
+         ) => HasCLI m (QueryFlag sym :> api) ctx where
     type CLIResult  m (QueryFlag sym :> api)   = CLIResult m api
     type CLIHandler m (QueryFlag sym :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ p = opt ?:>
-        fmap (.: addParam) (cliPStruct_ pm (Proxy @api) p)
+    cliPStructWithContext_ pm _ p = opt ?:>
+        fmap (.: addParam) (cliPStructWithContext_ pm (Proxy @api) p)
       where
         addParam :: Bool -> Request -> Request
         addParam = \case
@@ -325,14 +314,13 @@ instance ( KnownSymbol sym
 -- undefined behavior.
 instance ( MimeRender ct a
          , ParseBody a
-         , HasCLI m api
-         ) => HasCLI m (ReqBody' mods (ct ': cts) a :> api) where
-    type CLIContext m (ReqBody' mods (ct ': cts) a :> api)   = CLIContext m api
+         , HasCLI m api ctx
+         ) => HasCLI m (ReqBody' mods (ct ': cts) a :> api) ctx where
     type CLIResult  m (ReqBody' mods (ct ': cts) a :> api)   = CLIResult m api
     type CLIHandler m (ReqBody' mods (ct ': cts) a :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ p = parseBody @a %:>
-        fmap (.: addBody) (cliPStruct_ pm (Proxy @api) p)
+    cliPStructWithContext_ pm _ p = parseBody @a %:>
+        fmap (.: addBody) (cliPStructWithContext_ pm (Proxy @api) p)
       where
         addBody b = setRequestBodyLBS (mimeRender ctProxy b) (contentType ctProxy)
         ctProxy = Proxy @ct
@@ -352,40 +340,46 @@ instance ( MimeRender ct a
 -- in options.
 instance ( HasClient m (Verb method status cts' a)
          , ReflectMethod method
-         ) => HasCLI m (Verb method status cts' a) where
-    type CLIContext m (Verb method status cts' a)   = '[]
+         ) => HasCLI m (Verb method status cts' a) ctx where
     type CLIResult  m (Verb method status cts' a)   = a
     type CLIHandler m (Verb method status cts' a) r = a -> r
 
-    cliPStruct_ pm pa _ = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
-    cliHandler _ _ = ($)
+    cliPStructWithContext_ pm pa _ = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
+    cliHandler _ _ _ = ($)
 
+-- | Same semantics in parsing command line options as 'Verb'.
 instance ( RunStreamingClient m
          , MimeUnrender ct chunk
          , ReflectMethod method
          , FramingUnrender framing
          , FromSourceIO chunk a
-         ) => HasCLI m (Stream method status framing ct a) where
-    type CLIContext m (Stream method status framing ct a)   = '[]
+         ) => HasCLI m (Stream method status framing ct a) ctx where
     type CLIResult  m (Stream method status framing ct a)   = a
     type CLIHandler m (Stream method status framing ct a) r = a -> r
-    cliPStruct_ pm pa _ = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
-    cliHandler _ _ = ($)
+    cliPStructWithContext_ pm pa _ = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
+    cliHandler _ _ _ = ($)
+
+newtype GenStreamBody m mods framing ctype a = GenStreamBody
+    { genStreamBody :: m a
+    }
 
 -- | As a part of 'CLIContext', asks for a streaming source @a@.
 instance ( ToSourceIO chunk a
          , MimeRender ctype chunk
          , FramingRender framing
-         , HasCLI m api
+         , GenStreamBody m mods framing ctype a ∈ ctx
+         , HasCLI m api ctx
          , Monad m
-         ) => HasCLI m (StreamBody' mods framing ctype a :> api) where
-    type CLIContext m (StreamBody' mods framing ctype a :> api)   = a ': CLIContext m api
+         ) => HasCLI m (StreamBody' mods framing ctype a :> api) ctx where
     type CLIResult  m (StreamBody' mods framing ctype a :> api)   = CLIResult m api
     type CLIHandler m (StreamBody' mods framing ctype a :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ (mx :& p) =
-        withParamM (addBody <$> mx) <$> cliPStruct_ pm (Proxy @api) p
+    cliPStructWithContext_ pm _ p = withParamM (addBody <$> genStreamBody mx)
+                     <$> cliPStructWithContext_ pm (Proxy @api) p
       where
+        mx :: GenStreamBody m mods framing ctype a
+        mx = getIdentity . rget $ p
+        addBody :: a -> Request -> Request
         addBody x = setRequestBody (RequestBodySource sourceIO) (contentType ctypeP)
           where
             ctypeP   = Proxy @ctype
@@ -409,14 +403,13 @@ instance ( KnownSymbol sym
          , ToHttpApiData a
          , SBoolI (FoldRequired' 'False mods)
          , Typeable a
-         , HasCLI m api
-         ) => HasCLI m (Header' mods sym a :> api) where
-    type CLIContext m (Header' mods sym a :> api)   = CLIContext m api
+         , HasCLI m api ctx
+         ) => HasCLI m (Header' mods sym a :> api) ctx where
     type CLIResult  m (Header' mods sym a :> api)   = CLIResult m api
     type CLIHandler m (Header' mods sym a :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ p = opt ?:>
-        fmap (.: addParam) (cliPStruct_ pm (Proxy @api) p)
+    cliPStructWithContext_ pm _ p = opt ?:>
+        fmap (.: addParam) (cliPStructWithContext_ pm (Proxy @api) p)
       where
         addParam :: RequiredArgument mods a -> Request -> Request
         addParam = foldRequiredArgument (Proxy @mods) add (maybe id add)
@@ -440,115 +433,146 @@ instance ( KnownSymbol sym
     cliHandler pm _ = cliHandler pm (Proxy @api)
 
 -- | Using 'HttpVersion' has no affect on CLI operations.
-instance HasCLI m api => HasCLI m (HttpVersion :> api) where
-    type CLIContext m (HttpVersion :> api)   = CLIContext m api
+instance HasCLI m api ctx => HasCLI m (HttpVersion :> api) ctx where
     type CLIResult  m (HttpVersion :> api)   = CLIResult m api
     type CLIHandler m (HttpVersion :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ = cliPStruct_ pm (Proxy @api)
+    cliPStructWithContext_ pm _ = cliPStructWithContext_ pm (Proxy @api)
     cliHandler pm _ = cliHandler pm (Proxy @api)
 
 -- | 'Summary' is displayed during @--help@ when it is reached while
 -- navigating down subcommands.
-instance (KnownSymbol desc, HasCLI m api) => HasCLI m (Summary desc :> api) where
-    type CLIContext m (Summary desc :> api)   = CLIContext m api
+instance (KnownSymbol desc, HasCLI m api ctx) => HasCLI m (Summary desc :> api) ctx where
     type CLIResult  m (Summary desc :> api)   = CLIResult m api
     type CLIHandler m (Summary desc :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ = note [symbolVal (Proxy @desc)]
-                     . cliPStruct_ pm (Proxy :: Proxy api)
+    cliPStructWithContext_ pm _ = note [symbolVal (Proxy @desc)]
+                     . cliPStructWithContext_ pm (Proxy :: Proxy api)
     cliHandler pm _ = cliHandler pm (Proxy @api)
 
 -- | 'Description' is displayed during @--help@ when it is reached while
 -- navigating down subcommands.
-instance (KnownSymbol desc, HasCLI m api) => HasCLI m (Description desc :> api) where
-    type CLIContext m (Description desc :> api)   = CLIContext m api
+instance (KnownSymbol desc, HasCLI m api ctx) => HasCLI m (Description desc :> api) ctx where
     type CLIResult  m (Description desc :> api)   = CLIResult m api
     type CLIHandler m (Description desc :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ = note [symbolVal (Proxy @desc)]
-                     . cliPStruct_ pm (Proxy :: Proxy api)
+    cliPStructWithContext_ pm _ = note [symbolVal (Proxy @desc)]
+                     . cliPStructWithContext_ pm (Proxy :: Proxy api)
     cliHandler pm _ = cliHandler pm (Proxy @api)
 
 
 -- | Asks for method as a command line argument.  If any 'Verb' exists at
 -- the same endpoint, it can only be accessed as an extra @RAW@ subcommand
 -- (as if it had an extra path component labeled @"RAW"@).
-instance RunClient m => HasCLI m Raw where
-    type CLIContext m Raw   = '[]
+instance RunClient m => HasCLI m Raw ctx where
     type CLIResult  m Raw   = Response
     type CLIHandler m Raw r = Response -> r
 
-    cliPStruct_ pm pa _ = rawEndpoint . flip $ clientWithRoute pm pa
-    cliHandler _ _ = ($)
+    cliPStructWithContext_ pm pa _ = rawEndpoint . flip $ clientWithRoute pm pa
+    cliHandler _ _ _ = ($)
 
-instance HasCLI m api => HasCLI m (Vault :> api) where
-    type CLIContext m (Vault :> api)   = CLIContext m api
+instance HasCLI m api ctx => HasCLI m (Vault :> api) ctx where
     type CLIResult  m (Vault :> api)   = CLIResult m api
     type CLIHandler m (Vault :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ = cliPStruct_ pm (Proxy @api)
+    cliPStructWithContext_ pm _ = cliPStructWithContext_ pm (Proxy @api)
     cliHandler pm _ = cliHandler pm (Proxy @api)
 
-instance HasCLI m api => HasCLI m (RemoteHost :> api) where
-    type CLIContext m (RemoteHost :> api)   = CLIContext m api
+instance HasCLI m api ctx => HasCLI m (RemoteHost :> api) ctx where
     type CLIResult  m (RemoteHost :> api)   = CLIResult m api
     type CLIHandler m (RemoteHost :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ = cliPStruct_ pm (Proxy @api)
+    cliPStructWithContext_ pm _ = cliPStructWithContext_ pm (Proxy @api)
     cliHandler pm _ = cliHandler pm (Proxy @api)
 
-instance HasCLI m api => HasCLI m (IsSecure :> api) where
-    type CLIContext m (IsSecure :> api)   = CLIContext m api
+instance HasCLI m api ctx => HasCLI m (IsSecure :> api) ctx where
     type CLIResult  m (IsSecure :> api)   = CLIResult m api
     type CLIHandler m (IsSecure :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ = cliPStruct_ pm (Proxy @api)
+    cliPStructWithContext_ pm _ = cliPStructWithContext_ pm (Proxy @api)
     cliHandler pm _ = cliHandler pm (Proxy @api)
 
-instance HasCLI m subapi => HasCLI m (WithNamedContext name context subapi) where
-    type CLIContext m (WithNamedContext name context subapi)   = CLIContext m subapi
-    type CLIResult  m (WithNamedContext name context subapi)   = CLIResult m subapi
-    type CLIHandler m (WithNamedContext name context subapi) r = CLIHandler m subapi r
+-- | Contains a subcontext that can be descended down into using
+-- 'NamedContext'.  Mirrors 'Servant.Server.NamedContext'.
+--
+-- Useful for when you have multiple items with the same name within
+-- a context; this essentially creates a namespace for context items.
+newtype NamedContext (name :: Symbol) (subContext :: [Type])
+    = NamedContext { getNamedContext :: HList subContext }
 
-    cliPStruct_ pm _ = cliPStruct_ pm (Proxy @subapi)
-    cliHandler pm _ = cliHandler pm (Proxy @subapi)
+descendIntoNamedContext
+    :: forall (name :: Symbol) context subContext. NamedContext name subContext ∈ context
+    => Proxy name
+    -> HList context
+    -> HList subContext
+descendIntoNamedContext _ p = p'
+  where
+    Identity (NamedContext p' :: NamedContext name subContext) = rget p
 
--- | Adding 'AuthProtect' adds 'AuthenticatedRequest' to 'CLIContext', meaning a @m
--- 'AuthenticatedRequest' ('AuthProtect' tag)@ must be provided to allow
--- the client to generate authentication data.  The action will only be run
--- if the user selects this endpoint via command line arguments.
+-- | Descend down a subcontext indexed by a given name.  Must be provided
+-- when parsing within the context.
+--
+-- Useful for when you have multiple items with the same name within
+-- a context; this essentially creates a namespace for context items.
+instance ( NamedContext name subctx ∈ ctx
+         , HasCLI m subapi subctx
+         ) => HasCLI m (WithNamedContext name subctx subapi) ctx where
+    type CLIResult  m (WithNamedContext name subctx subapi)   = CLIResult m subapi
+    type CLIHandler m (WithNamedContext name subctx subapi) r = CLIHandler m subapi r
+
+    cliPStructWithContext_ pm _ = cliPStructWithContext_ pm (Proxy @subapi)
+                     . descendIntoNamedContext @_ @ctx @subctx (Proxy @name)
+    cliHandler pm _ _ = cliHandler pm (Proxy @subapi) (Proxy @subctx)
+
+newtype GenAuthReq m tag = GenAuthReq
+    { genAuthReq :: m (AuthenticatedRequest (AuthProtect tag))
+    }
+
+-- | Add 'GenAuthReq' to the required context, meaning it must be
+-- provided to allow the client to generate authentication data.  The
+-- action will only be run if the user selects this endpoint via command
+-- line arguments.
 --
 -- Please use a secure connection!
-instance (HasCLI m api, Monad m) => HasCLI m (AuthProtect tag :> api) where
-    type CLIContext m (AuthProtect tag :> api)   = AuthenticatedRequest (AuthProtect tag)
-                                                ': CLIContext m api
+instance ( HasCLI m api ctx
+         , GenAuthReq m tag ∈ ctx
+         , Monad m
+         ) => HasCLI m (AuthProtect tag :> api) ctx where
     type CLIResult  m (AuthProtect tag :> api)   = CLIResult m api
     type CLIHandler m (AuthProtect tag :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ (d :& p) =
-        withParamM (uncurry (&) . unAuthReq <$> d) <$> cliPStruct_ pm (Proxy @api) p
+    cliPStructWithContext_ pm _ p = withParamM (uncurry (&) . unAuthReq <$> genAuthReq md)
+                     <$> cliPStructWithContext_ pm (Proxy @api) p
+      where
+        md :: GenAuthReq m tag
+        md = getIdentity . rget $ p
 
     cliHandler pm _ = cliHandler pm (Proxy @api)
 
--- | Adding 'BasicAuth' adds 'BasicAuthData' to 'CLIContext', meaning a @m
--- 'BasicAuthData'@ must be provided to allow the client to generate
--- authentication data.  The action will only be run if the user selects
--- this endpoint via command line arguments.
+newtype GenBasicAuthData m realm = GenBasicAuthData
+    { genBasicAuthData :: m BasicAuthData
+    }
+
+-- | Add 'GenBasicAuthData' to the required context, meaning it must be
+-- provided to allow the client to generate authentication data.  The
+-- action will only be run if the user selects this endpoint via command
+-- line arguments.
 --
 -- Please use a secure connection!
 instance ( ToAuthInfo (BasicAuth realm usr)
-         , HasCLI m api
+         , HasCLI m api ctx
+         , GenBasicAuthData m realm ∈ ctx
          , Monad m
-         ) => HasCLI m (BasicAuth realm usr :> api) where
-    type CLIContext m (BasicAuth realm usr :> api)   = BasicAuthData
-                                                    ': CLIContext m api
+         ) => HasCLI m (BasicAuth realm usr :> api) ctx where
     type CLIResult  m (BasicAuth realm usr :> api)   = CLIResult m api
     type CLIHandler m (BasicAuth realm usr :> api) r = CLIHandler m api r
 
-    cliPStruct_ pm _ (d :& p) = note [infonote, reqnote] $
-        withParamM (basicAuthReq <$> d) <$> cliPStruct_ pm (Proxy @api) p
+    cliPStructWithContext_ pm _ p = note [infonote, reqnote]
+                       $ withParamM (basicAuthReq <$> genBasicAuthData md)
+                     <$> cliPStructWithContext_ pm (Proxy @api) p
       where
+        md :: GenBasicAuthData m realm
+        md = getIdentity . rget $ p
         infonote = "Authentication required: " ++ _authIntro
         reqnote = "Required information: " ++ _authDataRequired
 
@@ -570,4 +594,3 @@ withParamM mf g x = do
 -- | Two-argument function composition
 (.:) :: (c -> d) -> (a -> b -> c) -> a -> b -> d
 (f .: g) x y = f (g x y)
-

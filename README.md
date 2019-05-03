@@ -11,8 +11,10 @@ See `example/greet.hs` for a sample program.
 Getting started
 ---------------
 
-Here's a sample greeter based on
+Here's a sample API revolving around greeting and some deep paths, with
+authentication.
 
+```haskell
 type TestApi =
         Summary "Send a greeting"
            :> "hello"
@@ -23,7 +25,8 @@ type TestApi =
            :> "greet"
            :> ReqBody '[JSON] Greet
            :> ( Get  '[JSON] Int
-           :<|> Post '[JSON] NoContent
+           :<|> BasicAuth "login" Int
+             :> Post '[JSON] NoContent
               )
    :<|> Summary "Deep paths test"
            :> "dig"
@@ -34,4 +37,5 @@ type TestApi =
            :> "more"
            :> Summary "We made it"
            :> Get '[JSON] Text
+```
 

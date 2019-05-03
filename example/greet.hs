@@ -15,6 +15,7 @@ import           Data.Maybe
 import           Data.Proxy
 import           Data.Text                (Text)
 import           Data.Vinyl
+import           Data.Vinyl.Functor
 import           GHC.Generics
 import           Network.HTTP.Client      (newManager, defaultManagerSettings)
 import           Network.Wai.Handler.Warp (run)
@@ -71,7 +72,8 @@ type TestApi =
            :> "greet"
            :> ReqBody '[JSON] Greet
            :> ( Get  '[JSON] Int
-           :<|> Post '[JSON] NoContent
+           :<|> BasicAuth "login" Int
+             :> Post '[JSON] NoContent
               )
    :<|> Summary "Deep paths test"
            :> "dig"
@@ -82,10 +84,6 @@ type TestApi =
            :> "more"
            :> Summary "We made it"
            :> Get '[JSON] Text
-   :<|> Summary "Log in and get a session token"
-           :> "login"
-           :> BasicAuth "login" Int
-           :> Post '[JSON] Int
 
 
 testApi :: Proxy TestApi
@@ -99,13 +97,12 @@ server = serveWithContext testApi (authCheck :. EmptyContext) $
                     else t
         )
    :<|> (\(Greet g) -> pure (T.length g)
-                  :<|> pure NoContent
+                  :<|> (\_ -> pure NoContent)
         )
    :<|> (pure . T.reverse)
-   :<|> pure
   where
     -- | Map of valid users and passwords
-    userMap = M.fromList [("alice", "password"), ("bob", "hunter12")]
+    userMap = M.fromList [("alice", "password"), ("bob", "hunter2")]
     authCheck = BasicAuthCheck $ \(BasicAuthData u p) ->
       case M.lookup u userMap of
         Nothing -> pure NoSuchUser
@@ -115,13 +112,16 @@ server = serveWithContext testApi (authCheck :. EmptyContext) $
 
 main :: IO ()
 main = do
-    c <- parseHandleClient testApi (Proxy :: Proxy ClientM) (getPwd :& RNil) cinfo $
+    c <- parseHandleClientWithContext
+                    testApi
+                    (Proxy :: Proxy ClientM)
+                    (Identity getPwd :& RNil)
+                    cinfo $
             (\(Greet g) -> "Greeting: " ++ T.unpack g)
        :<|> ( (\i -> show i ++ " letters")
          :<|> (\_ -> "posted!")
             )
        :<|> (\s -> "Reversed: " ++ T.unpack s)
-       :<|> (\t -> "Logged in with token " ++ show t)
 
     _ <- forkIO $ run 8081 server
 
@@ -133,7 +133,10 @@ main = do
       Right rstring -> putStrLn rstring
   where
     cinfo = header "greet" <> progDesc "Greet API"
-    getPwd = liftIO $ do
+    getPwd :: GenBasicAuthData ClientM "login"
+    getPwd = GenBasicAuthData . liftIO $ do
+      putStrLn "Authentication needed for this action!"
+      putStrLn "(Hint: try 'bob' and 'hunter12')"
       putStrLn "Enter username:"
       n <- BS.getLine
       putStrLn "Enter password:"

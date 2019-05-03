@@ -21,7 +21,7 @@
 --   of command line parsers that can be manipulated as an ADT, as well as
 --   functionality to interpret it as a <a>Parser</a> command line argument
 --   parser.
-module Servant.CLI.PStruct
+module Servant.CLI.Internal.PStruct
 
 -- | How to "read" an option.
 data OptRead :: Type -> Type
@@ -147,20 +147,20 @@ orOptional :: ReadM a -> Coyoneda OptRead (Maybe a)
 
 -- | An <a>optRead</a> that is on-or-off.
 orSwitch :: Coyoneda OptRead Bool
-instance Data.Traversable.Traversable (Servant.CLI.PStruct.PStructF a)
-instance Data.Foldable.Foldable (Servant.CLI.PStruct.PStructF a)
-instance GHC.Base.Functor (Servant.CLI.PStruct.PStructF a)
-instance Data.Functor.Foldable.Recursive (Servant.CLI.PStruct.PStruct a)
-instance Data.Functor.Foldable.Corecursive (Servant.CLI.PStruct.PStruct a)
-instance GHC.Base.Semigroup (Servant.CLI.PStruct.EndpointMap a)
-instance GHC.Base.Monoid (Servant.CLI.PStruct.EndpointMap a)
-instance GHC.Base.Semigroup (Servant.CLI.PStruct.PStruct a)
-instance GHC.Base.Monoid (Servant.CLI.PStruct.PStruct a)
-instance GHC.Base.Functor Servant.CLI.PStruct.PStruct
-instance GHC.Base.Functor Servant.CLI.PStruct.EndpointMap
-instance GHC.Base.Functor Servant.CLI.PStruct.Endpoint
-instance GHC.Base.Functor Servant.CLI.PStruct.Arg
-instance GHC.Base.Functor Servant.CLI.PStruct.Opt
+instance Data.Traversable.Traversable (Servant.CLI.Internal.PStruct.PStructF a)
+instance Data.Foldable.Foldable (Servant.CLI.Internal.PStruct.PStructF a)
+instance GHC.Base.Functor (Servant.CLI.Internal.PStruct.PStructF a)
+instance Data.Functor.Foldable.Recursive (Servant.CLI.Internal.PStruct.PStruct a)
+instance Data.Functor.Foldable.Corecursive (Servant.CLI.Internal.PStruct.PStruct a)
+instance GHC.Base.Semigroup (Servant.CLI.Internal.PStruct.EndpointMap a)
+instance GHC.Base.Monoid (Servant.CLI.Internal.PStruct.EndpointMap a)
+instance GHC.Base.Semigroup (Servant.CLI.Internal.PStruct.PStruct a)
+instance GHC.Base.Monoid (Servant.CLI.Internal.PStruct.PStruct a)
+instance GHC.Base.Functor Servant.CLI.Internal.PStruct.PStruct
+instance GHC.Base.Functor Servant.CLI.Internal.PStruct.EndpointMap
+instance GHC.Base.Functor Servant.CLI.Internal.PStruct.Endpoint
+instance GHC.Base.Functor Servant.CLI.Internal.PStruct.Arg
+instance GHC.Base.Functor Servant.CLI.Internal.PStruct.Opt
 
 
 -- | Provides the interface for <a>ParseBody</a>, a helper class for

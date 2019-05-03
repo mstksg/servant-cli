@@ -31,26 +31,28 @@ ghc-options:
 - -Wredundant-constraints
 - -Werror=incomplete-patterns
 
+dependencies:
+- base >= 4.7 && < 5
+- bytestring
+- vinyl
+- text
+- optparse-applicative
+- containers
+- servant >= 0.15
+
 
 library:
   source-dirs: src
   dependencies:
-  - base >= 4.7 && < 5
-  - bytestring
   - case-insensitive
-  - containers
   - filepath
   - free
   - http-types
   - kan-extensions
-  - optparse-applicative
   - profunctors
   - recursion-schemes
-  - servant
-  - servant-client-core
+  - servant-client-core >= 0.15
   - servant-docs
-  - text
-  - vinyl
 
 executables:
   greet-cli:
@@ -58,16 +60,9 @@ executables:
     source-dirs:         example
     dependencies:
     - aeson
-    - base >= 4.7 && < 5
-    - bytestring
-    - containers
     - http-client
-    - optparse-applicative
     - random
-    - servant
     - servant-cli
     - servant-client
     - servant-server
-    - text
-    - vinyl
     - warp

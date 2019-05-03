@@ -55,7 +55,7 @@ import           Data.Proxy
 import           Data.Vinyl
 import           Options.Applicative
 import           Servant.CLI.HasCLI
-import           Servant.CLI.PStruct
+import           Servant.CLI.Internal.PStruct
 import           Servant.CLI.ParseBody
 import           Servant.Client.Core
 import           Servant.Docs.Internal

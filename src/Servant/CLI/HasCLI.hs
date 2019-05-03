@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes   #-}
+{-# LANGUAGE CPP                   #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE LambdaCase            #-}
@@ -49,7 +50,7 @@ import           GHC.TypeLits hiding          (Mod)
 import           Options.Applicative
 import           Servant.API hiding           (addHeader)
 import           Servant.API.Modifiers
-import           Servant.CLI.PStruct
+import           Servant.CLI.Internal.PStruct
 import           Servant.CLI.ParseBody
 import           Servant.Client.Core
 import           Servant.Docs.Internal hiding (Endpoint, Response)
@@ -371,14 +372,18 @@ instance ( ToSourceIO chunk a
         mx :: ContextFor m (StreamBody' mods framing ctype a)
         mx = rget p
         addBody :: a -> Request -> Request
-        addBody x = setRequestBody (RequestBodySource sourceIO) (contentType ctypeP)
+        addBody x = setRequestBody rbs (contentType ctypeP)
           where
             ctypeP   = Proxy @ctype
             framingP = Proxy @framing
-            sourceIO = framingRender
-                framingP
-                (mimeRender ctypeP :: chunk -> BSL.ByteString)
-                (toSourceIO x)
+#if MIN_VERSION_servant_client_core(0,16,0)
+            rbs      = RequestBodySource $
+              framingRender framingP
+                            (mimeRender ctypeP :: chunk -> BSL.ByteString)
+                            (toSourceIO x)
+#else
+            rbs      = error "HasCLI @StreamBody not supported with servant < 0.16"
+#endif
 
     cliHandler pm _ = cliHandler pm (Proxy @api)
 

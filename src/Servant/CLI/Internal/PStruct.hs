@@ -23,7 +23,7 @@
 -- command line parsers that can be manipulated as an ADT, as well as
 -- functionality to interpret it as a 'Parser' command line argument
 -- parser.
-module Servant.CLI.PStruct (
+module Servant.CLI.Internal.PStruct (
     OptRead(..)
   , Opt(..)
   , Arg(..)

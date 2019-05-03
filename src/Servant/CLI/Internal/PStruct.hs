@@ -108,7 +108,7 @@ type Captures = Day Arg      PStruct
             :+: Day MultiArg EndpointMap
 
 -- | Endpoint arguments and body.
-data Endpoint a = Endpoint
+newtype Endpoint a = Endpoint
     { epStruct :: Day (Ap Opt) Parser a }
   deriving Functor
 

@@ -5,6 +5,7 @@ license:             BSD3
 author:              "Justin Le"
 maintainer:          "justin@jle.im"
 copyright:           "(c) Justin Le 2019"
+tested-with:         GHC >= 8.4
 
 extra-source-files:
 - README.md
@@ -32,7 +33,7 @@ ghc-options:
 - -Werror=incomplete-patterns
 
 dependencies:
-- base >= 4.7 && < 5
+- base >= 4.11 && < 5
 - bytestring
 - vinyl
 - text

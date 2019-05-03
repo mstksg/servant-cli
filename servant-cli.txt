@@ -380,6 +380,10 @@ NamedContext :: Rec (ContextFor m) subContext -> NamedContext m
 descendIntoNamedContext :: forall (name :: Symbol) context subContext m. NamedContext m name subContext ∈ context => Proxy name -> Rec (ContextFor m) context -> Rec (ContextFor m) subContext
 
 -- | Create a structure for a command line parser.
+--   
+--   This can be useful if you are combining functionality with existing
+--   <i>optparse-applicative</i> parsers. You can convert a <a>PStruct</a>
+--   to a <a>Parser</a> using <a>structParser</a>.
 cliPStruct :: HasCLI m api '[] => Proxy m -> Proxy api -> PStruct (m (CLIResult m api))
 
 -- | A version of <a>cliPStruct</a> that can be used if the API requires
@@ -394,6 +398,16 @@ cliPStructWithContext :: HasCLI m api context => Proxy m -> Proxy api -> Rec (Co
 --   <tt>"--help"</tt>; it can be useful for adding a header or program
 --   description. Otherwise, just use <a>mempty</a>.
 structParser :: PStruct a -> InfoMod a -> ParserInfo a
+
+-- | Create a structure for a command line parser, producing results
+--   according to a <a>CLIHandler</a>. See <a>parseHandleClient</a> for
+--   more information.
+--   
+--   This can be useful if you are combining functionality with existing
+--   <i>optparse-applicative</i> parsers. You can convert a <a>PStruct</a>
+--   to a <a>Parser</a> using <a>structParser</a>.
+cliHandlePStruct :: (HasCLI m api '[], Functor m) => Proxy m -> Proxy api -> CLIHandler m api r -> PStruct (m r)
+cliHandlePStructWithContext :: forall m api context r. (HasCLI m api context, Functor m) => Proxy m -> Proxy api -> Rec (ContextFor m) context -> CLIHandler m api r -> PStruct (m r)
 
 -- | A helper class for defining directly how to parse request bodies. This
 --   allows more complex parsing of bodies.

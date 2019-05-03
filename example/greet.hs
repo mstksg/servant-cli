@@ -135,7 +135,7 @@ main = do
     getPwd :: ContextFor ClientM (BasicAuth "login" Int)
     getPwd = GenBasicAuthData . liftIO $ do
       putStrLn "Authentication needed for this action!"
-      putStrLn "(Hint: try 'bob' and 'hunter12')"
+      putStrLn "(Hint: try 'bob' and 'hunter2')"
       putStrLn "Enter username:"
       n <- BS.getLine
       putStrLn "Enter password:"

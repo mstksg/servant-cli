@@ -44,6 +44,8 @@ module Servant.CLI (
   -- * Lower-level
   , cliPStruct, cliPStructWithContext
   , structParser
+  -- ** With context
+  , cliHandlePStruct, cliHandlePStructWithContext
   -- * Re-export
   , ParseBody(..), defaultParseBody
   , ToCapture(..), DocCapture(..)
@@ -68,7 +70,19 @@ cliPStructWithContext
     -> Proxy api                        -- ^ API
     -> Rec (ContextFor m) context       -- ^ Extra context
     -> PStruct (m (CLIResult m api))
-cliPStructWithContext pm pa = fmap ($ defaultRequest) . cliPStructWithContext_ pm pa
+cliPStructWithContext pm pa = fmap ($ defaultRequest)
+                            . cliPStructWithContext_ pm pa
+
+cliHandlePStructWithContext
+    :: forall m api context r. (HasCLI m api context, Functor m)
+    => Proxy m                          -- ^ Client monad
+    -> Proxy api                        -- ^ API
+    -> Rec (ContextFor m) context       -- ^ Extra context
+    -> CLIHandler m api r               -- ^ Handler
+    -> PStruct (m r)
+cliHandlePStructWithContext pm pa p h =
+       fmap (cliHandler pm pa (Proxy @context) h)
+   <$> cliPStructWithContext pm pa p
 
 -- | A version of 'parseClient' that can be used if the API requires
 -- any external context to generate runtime data.
@@ -97,12 +111,31 @@ parseHandleClientWithContext pa pm p im h =
    <$> parseClientWithContext pa pm p im
 
 -- | Create a structure for a command line parser.
+--
+-- This can be useful if you are combining functionality with existing
+-- /optparse-applicative/ parsers.  You can convert a 'PStruct' to
+-- a 'Parser' using 'structParser'.
 cliPStruct
     :: HasCLI m api '[]
     => Proxy m                          -- ^ Client monad
     -> Proxy api                        -- ^ API
     -> PStruct (m (CLIResult m api))
 cliPStruct pm pa = cliPStructWithContext pm pa RNil
+
+-- | Create a structure for a command line parser, producing results
+-- according to a 'CLIHandler'.  See 'parseHandleClient' for more
+-- information.
+--
+-- This can be useful if you are combining functionality with existing
+-- /optparse-applicative/ parsers.  You can convert a 'PStruct' to
+-- a 'Parser' using 'structParser'.
+cliHandlePStruct
+    :: (HasCLI m api '[], Functor m)
+    => Proxy m                          -- ^ Client monad
+    -> Proxy api                        -- ^ API
+    -> CLIHandler m api r               -- ^ Handler
+    -> PStruct (m r)
+cliHandlePStruct pm pa = cliHandlePStructWithContext pm pa RNil
 
 -- | Parse a servant client; the result can be run.  The choice of @m@
 -- gives the backend you are using; for example, the default GHC

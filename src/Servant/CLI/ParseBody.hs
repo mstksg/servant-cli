@@ -28,7 +28,8 @@ import qualified Data.Text.Lazy      as TL
 -- | A helper class for defining directly how to parse request bodies.
 -- This allows more complex parsing of bodies.
 --
--- You need an instance of this for every type you use with 'ReqBody'.
+-- You need an instance of this for every type you use with
+-- 'Servant.API.ReqBody'.
 class ParseBody a where
     parseBody :: Parser a
 

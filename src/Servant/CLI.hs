@@ -73,6 +73,8 @@ cliPStructWithContext
 cliPStructWithContext pm pa = fmap ($ defaultRequest)
                             . cliPStructWithContext_ pm pa
 
+-- | A version of 'cliHandlePStruct' that can be used if the API requires
+-- any external context to generate runtime data.
 cliHandlePStructWithContext
     :: forall m api context r. (HasCLI m api context, Functor m)
     => Proxy m                          -- ^ Client monad
@@ -168,12 +170,6 @@ parseClient pa pm = parseClientWithContext pa pm RNil
 -- The handler is usually a 'Servant.API.:<|>' for every endpoint branch.
 -- You can find it by using typed holes or asking ghci with @:t@ or @:kind!
 -- forall m r.  CLIHandler m MyAPI r@.
---
--- Takes a 'Rec' of actions to generate required items that cannot be
--- passed via the command line (like authentication).  Pass in 'RNil' if no
--- context is expected (that is, if @'CLIContext' m api@ is an empty
--- list), or use 'parseHandleClient''.  The actions will only be run if
--- they are needed.
 --
 -- Takes options on how the top-level prompt is displayed when given
 -- @"--help"@; it can be useful for adding a header or program description.

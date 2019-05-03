@@ -62,6 +62,10 @@ import qualified Data.List.NonEmpty           as NE
 import qualified Data.Text                    as T
 import qualified Data.Text.Encoding           as T
 
+-- | Data family associating API combinators with contexts required to run
+-- them.  These typically will be actions in @m@ that fetch/generate the
+-- required data, and will only be "run" if the user selects an endpoint
+-- that requires it through the command line interface.
 data family ContextFor (m :: Type -> Type) :: Type -> Type
 
 
@@ -92,18 +96,18 @@ class HasCLI m api ctx where
     -- endpoint, according to the ':<|>'s in the API.  It mirrors the
     -- structure of 'Client' and 'Servant.Server.ServerT'.
     --
-    -- Used with functions like 'parseHandleClient'.
+    -- Used with functions like 'Servant.CLI.parseHandleClient'.
     type CLIHandler (m :: Type -> Type) (api :: Type) (r :: Type) :: Type
 
-    -- | Generate a 'PStruct' showing how to modify a 'Request' and perform
-    -- an action, given an API and underlying monad.  Only meant for
-    -- internal use; should be used through 'Servant.CLI.cliPStruct'
-    -- instead.
+    -- | Create a structure for a command line parser, which parses how to
+    -- modify a 'Request' and perform an action, given an API and
+    -- underlying monad.  Only meant for internal use; should be used
+    -- through 'Servant.CLI.cliPStructWithContext' instead.
     --
     -- Takes a 'Rec' of actions to generate required items that cannot be
     -- passed via the command line (like authentication).  Pass in 'RNil'
-    -- if no parameters are expected (that is, if @'CLIContext' m api@ is an
-    -- empty list).  The actions will only be run if they are needed.
+    -- if no parameters are expected.  The actions will only be run if they
+    -- are needed.
     cliPStructWithContext_
         :: Proxy m
         -> Proxy api
@@ -355,7 +359,7 @@ instance ( RunStreamingClient m
 newtype instance ContextFor m (StreamBody' mods framing ctype a) =
     GenStreamBody { genStreamBody :: m a }
 
--- | As a part of 'CLIContext', asks for a streaming source @a@.
+-- | As a part of @ctx@, asks for a streaming source @a@.
 instance ( ToSourceIO chunk a
          , MimeRender ctype chunk
          , FramingRender framing
@@ -387,9 +391,10 @@ instance ( ToSourceIO chunk a
 
     cliHandler pm _ = cliHandler pm (Proxy @api)
 
--- | A 'Header' in the middle of a path is interpreted as a command line
--- argument, prefixed with "header".  For example, @'Header' "foo" 'Int'@
--- is an option for @--header-foo@.
+-- | A 'Header'' in the middle of a path is interpreted as a command line
+-- argument, prefixed with "header".  For example,
+-- @'Servant.API.Header.Header' "foo" 'Int'@ is an option for
+-- @--header-foo@.
 --
 -- Like for 'QueryParam'',  arguments are associated with the action at
 -- their endpoint.  After entering all path components and positional

@@ -171,7 +171,7 @@ module Servant.CLI.ParseBody
 --   allows more complex parsing of bodies.
 --   
 --   You need an instance of this for every type you use with
---   <tt>ReqBody</tt>.
+--   <a>ReqBody</a>.
 class ParseBody a
 parseBody :: ParseBody a => Parser a
 parseBody :: (ParseBody a, Typeable a, Read a) => Parser a
@@ -220,24 +220,30 @@ class HasCLI m api ctx where {
     --   each endpoint, according to the <a>:&lt;|&gt;</a>s in the API. It
     --   mirrors the structure of <a>Client</a> and <a>ServerT</a>.
     --   
-    --   Used with functions like <tt>parseHandleClient</tt>.
+    --   Used with functions like <a>parseHandleClient</a>.
     type family CLIHandler (m :: Type -> Type) (api :: Type) (r :: Type) :: Type;
 }
 
--- | Generate a <a>PStruct</a> showing how to modify a <a>Request</a> and
---   perform an action, given an API and underlying monad. Only meant for
---   internal use; should be used through <a>cliPStruct</a> instead.
+-- | Create a structure for a command line parser, which parses how to
+--   modify a <a>Request</a> and perform an action, given an API and
+--   underlying monad. Only meant for internal use; should be used through
+--   <a>cliPStructWithContext</a> instead.
 --   
 --   Takes a <a>Rec</a> of actions to generate required items that cannot
 --   be passed via the command line (like authentication). Pass in
---   <a>RNil</a> if no parameters are expected (that is, if
---   <tt><tt>CLIContext</tt> m api</tt> is an empty list). The actions will
---   only be run if they are needed.
+--   <a>RNil</a> if no parameters are expected. The actions will only be
+--   run if they are needed.
 cliPStructWithContext_ :: HasCLI m api ctx => Proxy m -> Proxy api -> Rec (ContextFor m) ctx -> PStruct (Request -> m (CLIResult m api))
 
 -- | Handle all the possibilities in a <a>CLIResult</a>, by giving the
 --   appropriate <a>CLIHandler</a>.
 cliHandler :: HasCLI m api ctx => Proxy m -> Proxy api -> Proxy ctx -> CLIHandler m api r -> CLIResult m api -> r
+
+-- | Data family associating API combinators with contexts required to run
+--   them. These typically will be actions in <tt>m</tt> that
+--   fetch/generate the required data, and will only be "run" if the user
+--   selects an endpoint that requires it through the command line
+--   interface.
 data family ContextFor (m :: Type -> Type) :: Type -> Type
 
 -- | Contains a subcontext that can be descended down into using
@@ -312,13 +318,6 @@ parseClient :: HasCLI m api '[] => Proxy api -> Proxy m -> InfoMod (m (CLIResult
 --   You can find it by using typed holes or asking ghci with <tt>:t</tt>
 --   or <tt>:kind! forall m r. CLIHandler m MyAPI r</tt>.
 --   
---   Takes a <a>Rec</a> of actions to generate required items that cannot
---   be passed via the command line (like authentication). Pass in
---   <a>RNil</a> if no context is expected (that is, if
---   <tt><tt>CLIContext</tt> m api</tt> is an empty list), or use
---   <tt>parseHandleClient'</tt>. The actions will only be run if they are
---   needed.
---   
 --   Takes options on how the top-level prompt is displayed when given
 --   <tt>"--help"</tt>; it can be useful for adding a header or program
 --   description. Otherwise, just use <a>mempty</a>.
@@ -359,13 +358,19 @@ class HasCLI m api ctx where {
     --   each endpoint, according to the <a>:&lt;|&gt;</a>s in the API. It
     --   mirrors the structure of <a>Client</a> and <a>ServerT</a>.
     --   
-    --   Used with functions like <tt>parseHandleClient</tt>.
+    --   Used with functions like <a>parseHandleClient</a>.
     type family CLIHandler (m :: Type -> Type) (api :: Type) (r :: Type) :: Type;
 }
 
 -- | Handle all the possibilities in a <a>CLIResult</a>, by giving the
 --   appropriate <a>CLIHandler</a>.
 cliHandler :: HasCLI m api ctx => Proxy m -> Proxy api -> Proxy ctx -> CLIHandler m api r -> CLIResult m api -> r
+
+-- | Data family associating API combinators with contexts required to run
+--   them. These typically will be actions in <tt>m</tt> that
+--   fetch/generate the required data, and will only be "run" if the user
+--   selects an endpoint that requires it through the command line
+--   interface.
 data family ContextFor (m :: Type -> Type) :: Type -> Type
 
 -- | Contains a subcontext that can be descended down into using
@@ -407,13 +412,16 @@ structParser :: PStruct a -> InfoMod a -> ParserInfo a
 --   <i>optparse-applicative</i> parsers. You can convert a <a>PStruct</a>
 --   to a <a>Parser</a> using <a>structParser</a>.
 cliHandlePStruct :: (HasCLI m api '[], Functor m) => Proxy m -> Proxy api -> CLIHandler m api r -> PStruct (m r)
+
+-- | A version of <a>cliHandlePStruct</a> that can be used if the API
+--   requires any external context to generate runtime data.
 cliHandlePStructWithContext :: forall m api context r. (HasCLI m api context, Functor m) => Proxy m -> Proxy api -> Rec (ContextFor m) context -> CLIHandler m api r -> PStruct (m r)
 
 -- | A helper class for defining directly how to parse request bodies. This
 --   allows more complex parsing of bodies.
 --   
 --   You need an instance of this for every type you use with
---   <tt>ReqBody</tt>.
+--   <a>ReqBody</a>.
 class ParseBody a
 parseBody :: ParseBody a => Parser a
 parseBody :: (ParseBody a, Typeable a, Read a) => Parser a

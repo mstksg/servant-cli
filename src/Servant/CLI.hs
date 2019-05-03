@@ -27,6 +27,9 @@
 -- 'Either's for every endpoint, but 'parseHandleClient' allows you to
 -- conveniently specify how you want to sort each endpoint entry into
 -- a single result.
+--
+-- See <https://hackage.haskell.org/package/servant-cli README> for
+-- a tutorial.
 module Servant.CLI (
   -- * Parse Client
     parseClient, parseHandleClient
@@ -35,9 +38,7 @@ module Servant.CLI (
   -- * Typeclasses
   , HasCLI (CLIResult, CLIHandler, cliHandler)
   -- * Context
-  , GenStreamBody(..)
-  , GenAuthReq(..)
-  , GenBasicAuthData(..)
+  , ContextFor(..)
   , NamedContext(..)
   , descendIntoNamedContext
   -- * Lower-level
@@ -65,7 +66,7 @@ cliPStructWithContext
     :: HasCLI m api context
     => Proxy m                          -- ^ Client monad
     -> Proxy api                        -- ^ API
-    -> HList context                    -- ^ Extra context
+    -> Rec (ContextFor m) context       -- ^ Extra context
     -> PStruct (m (CLIResult m api))
 cliPStructWithContext pm pa = fmap ($ defaultRequest) . cliPStructWithContext_ pm pa
 
@@ -75,7 +76,7 @@ parseClientWithContext
     :: HasCLI m api context
     => Proxy api                        -- ^ API
     -> Proxy m                          -- ^ Client monad
-    -> HList context                    -- ^ Extra context
+    -> Rec (ContextFor m) context       -- ^ Extra context
     -> InfoMod (m (CLIResult m api))    -- ^ Options for top-level display
     -> IO (m (CLIResult m api))
 parseClientWithContext pa pm p im = execParser . flip structParser im
@@ -87,7 +88,7 @@ parseHandleClientWithContext
     :: forall m api context r. (HasCLI m api context, Functor m)
     => Proxy api                        -- ^ API
     -> Proxy m                          -- ^ Client monad
-    -> HList context                    -- ^ Extra context
+    -> Rec (ContextFor m) context       -- ^ Extra context
     -> InfoMod (m (CLIResult m api))    -- ^ Options for top-level display
     -> CLIHandler m api r               -- ^ Handler
     -> IO (m r)

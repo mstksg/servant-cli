@@ -31,9 +31,7 @@ module Servant.CLI.HasCLI (
   -- * Class
     HasCLI(..)
   -- * Context
-  , GenStreamBody(..)
-  , GenAuthReq(..)
-  , GenBasicAuthData(..)
+  , ContextFor(..)
   , NamedContext(..)
   , descendIntoNamedContext
   ) where
@@ -46,11 +44,10 @@ import           Data.List
 import           Data.Profunctor
 import           Data.Proxy
 import           Data.Vinyl hiding            (rmap)
-import           Data.Vinyl.Functor
 import           Data.Void
 import           GHC.TypeLits hiding          (Mod)
 import           Options.Applicative
-import           Servant.API hiding           (addHeader, HList)
+import           Servant.API hiding           (addHeader)
 import           Servant.API.Modifiers
 import           Servant.CLI.PStruct
 import           Servant.CLI.ParseBody
@@ -64,6 +61,8 @@ import qualified Data.List.NonEmpty           as NE
 import qualified Data.Text                    as T
 import qualified Data.Text.Encoding           as T
 
+data family ContextFor (m :: Type -> Type) :: Type -> Type
+
 
 -- | Typeclass defining how each API combinator influences how a server can
 -- be interacted with using command line options.
@@ -74,13 +73,6 @@ import qualified Data.Text.Encoding           as T
 -- Unless you are adding new combinators to be used with APIs, you can
 -- ignore this class.
 class HasCLI m api ctx where
-
-    ---- | List of extra parameters that must be generated at runtime to
-    ---- produce the desired request.
-    ----
-    ---- For most routes this will be an empty list, but it is non-empty for
-    ---- 'StreamBody', 'BasicAuth', and 'AuthProtect'.
-    --type CLIContext (m :: Type -> Type) (api :: Type) :: [Type]
 
     -- | The parsed type of the client request response.  Usually this will
     -- be a bunch of nested 'Either's for every API endpoint, nested
@@ -114,7 +106,7 @@ class HasCLI m api ctx where
     cliPStructWithContext_
         :: Proxy m
         -> Proxy api
-        -> HList ctx
+        -> Rec (ContextFor m) ctx
         -> PStruct (Request -> m (CLIResult m api))
 
     -- | Handle all the possibilities in a 'CLIResult', by giving the
@@ -359,15 +351,14 @@ instance ( RunStreamingClient m
     cliPStructWithContext_ pm pa _ = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
     cliHandler _ _ _ = ($)
 
-newtype GenStreamBody m mods framing ctype a = GenStreamBody
-    { genStreamBody :: m a
-    }
+newtype instance ContextFor m (StreamBody' mods framing ctype a) =
+    GenStreamBody { genStreamBody :: m a }
 
 -- | As a part of 'CLIContext', asks for a streaming source @a@.
 instance ( ToSourceIO chunk a
          , MimeRender ctype chunk
          , FramingRender framing
-         , GenStreamBody m mods framing ctype a ∈ ctx
+         , StreamBody' mods framing ctype a ∈ ctx
          , HasCLI m api ctx
          , Monad m
          ) => HasCLI m (StreamBody' mods framing ctype a :> api) ctx where
@@ -377,8 +368,8 @@ instance ( ToSourceIO chunk a
     cliPStructWithContext_ pm _ p = withParamM (addBody <$> genStreamBody mx)
                      <$> cliPStructWithContext_ pm (Proxy @api) p
       where
-        mx :: GenStreamBody m mods framing ctype a
-        mx = getIdentity . rget $ p
+        mx :: ContextFor m (StreamBody' mods framing ctype a)
+        mx = rget p
         addBody :: a -> Request -> Request
         addBody x = setRequestBody (RequestBodySource sourceIO) (contentType ctypeP)
           where
@@ -497,24 +488,28 @@ instance HasCLI m api ctx => HasCLI m (IsSecure :> api) ctx where
 --
 -- Useful for when you have multiple items with the same name within
 -- a context; this essentially creates a namespace for context items.
-newtype NamedContext (name :: Symbol) (subContext :: [Type])
-    = NamedContext { getNamedContext :: HList subContext }
+newtype NamedContext m (name :: Symbol) (subContext :: [Type])
+    = NamedContext (Rec (ContextFor m) subContext)
 
+newtype instance ContextFor m (NamedContext m name subContext)
+    = NC (NamedContext m name subContext)
+
+-- | Allows you to access 'NamedContext's inside a context.
 descendIntoNamedContext
-    :: forall (name :: Symbol) context subContext. NamedContext name subContext ∈ context
+    :: forall (name :: Symbol) context subContext m. NamedContext m name subContext ∈ context
     => Proxy name
-    -> HList context
-    -> HList subContext
+    -> Rec (ContextFor m) context
+    -> Rec (ContextFor m) subContext
 descendIntoNamedContext _ p = p'
   where
-    Identity (NamedContext p' :: NamedContext name subContext) = rget p
+    NC (NamedContext p' :: NamedContext m name subContext) = rget p
 
 -- | Descend down a subcontext indexed by a given name.  Must be provided
 -- when parsing within the context.
 --
 -- Useful for when you have multiple items with the same name within
 -- a context; this essentially creates a namespace for context items.
-instance ( NamedContext name subctx ∈ ctx
+instance ( NamedContext m name subctx ∈ ctx
          , HasCLI m subapi subctx
          ) => HasCLI m (WithNamedContext name subctx subapi) ctx where
     type CLIResult  m (WithNamedContext name subctx subapi)   = CLIResult m subapi
@@ -524,7 +519,7 @@ instance ( NamedContext name subctx ∈ ctx
                      . descendIntoNamedContext @_ @ctx @subctx (Proxy @name)
     cliHandler pm _ _ = cliHandler pm (Proxy @subapi) (Proxy @subctx)
 
-newtype GenAuthReq m tag = GenAuthReq
+newtype instance ContextFor m (AuthProtect tag) = GenAuthReq
     { genAuthReq :: m (AuthenticatedRequest (AuthProtect tag))
     }
 
@@ -535,7 +530,7 @@ newtype GenAuthReq m tag = GenAuthReq
 --
 -- Please use a secure connection!
 instance ( HasCLI m api ctx
-         , GenAuthReq m tag ∈ ctx
+         , AuthProtect tag ∈ ctx
          , Monad m
          ) => HasCLI m (AuthProtect tag :> api) ctx where
     type CLIResult  m (AuthProtect tag :> api)   = CLIResult m api
@@ -544,12 +539,12 @@ instance ( HasCLI m api ctx
     cliPStructWithContext_ pm _ p = withParamM (uncurry (&) . unAuthReq <$> genAuthReq md)
                      <$> cliPStructWithContext_ pm (Proxy @api) p
       where
-        md :: GenAuthReq m tag
-        md = getIdentity . rget $ p
+        md :: ContextFor m (AuthProtect tag)
+        md = rget p
 
     cliHandler pm _ = cliHandler pm (Proxy @api)
 
-newtype GenBasicAuthData m realm = GenBasicAuthData
+newtype instance ContextFor m (BasicAuth realm usr) = GenBasicAuthData
     { genBasicAuthData :: m BasicAuthData
     }
 
@@ -561,7 +556,7 @@ newtype GenBasicAuthData m realm = GenBasicAuthData
 -- Please use a secure connection!
 instance ( ToAuthInfo (BasicAuth realm usr)
          , HasCLI m api ctx
-         , GenBasicAuthData m realm ∈ ctx
+         , BasicAuth realm usr ∈ ctx
          , Monad m
          ) => HasCLI m (BasicAuth realm usr :> api) ctx where
     type CLIResult  m (BasicAuth realm usr :> api)   = CLIResult m api
@@ -571,8 +566,8 @@ instance ( ToAuthInfo (BasicAuth realm usr)
                        $ withParamM (basicAuthReq <$> genBasicAuthData md)
                      <$> cliPStructWithContext_ pm (Proxy @api) p
       where
-        md :: GenBasicAuthData m realm
-        md = getIdentity . rget $ p
+        md :: ContextFor m (BasicAuth realm usr)
+        md = rget p
         infonote = "Authentication required: " ++ _authIntro
         reqnote = "Required information: " ++ _authDataRequired
 

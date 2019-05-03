@@ -21,7 +21,8 @@ description: |
   Hooks into the annotation system used by /servant-docs/ to provide descriptions
   for parameters and captures.
 
-  See @example/greet.hs@ for an example usage.
+  See @example/greet.hs@ for an example usage, and the
+  <https://hackage.haskell.org/package/servant-cli README> for a tutorial.
 
 ghc-options:
 - -Wall

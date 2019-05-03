@@ -15,7 +15,6 @@ import           Data.Maybe
 import           Data.Proxy
 import           Data.Text                (Text)
 import           Data.Vinyl
-import           Data.Vinyl.Functor
 import           GHC.Generics
 import           Network.HTTP.Client      (newManager, defaultManagerSettings)
 import           Network.Wai.Handler.Warp (run)
@@ -115,7 +114,7 @@ main = do
     c <- parseHandleClientWithContext
                     testApi
                     (Proxy :: Proxy ClientM)
-                    (Identity getPwd :& RNil)
+                    (getPwd :& RNil)
                     cinfo $
             (\(Greet g) -> "Greeting: " ++ T.unpack g)
        :<|> ( (\i -> show i ++ " letters")
@@ -133,7 +132,7 @@ main = do
       Right rstring -> putStrLn rstring
   where
     cinfo = header "greet" <> progDesc "Greet API"
-    getPwd :: GenBasicAuthData ClientM "login"
+    getPwd :: ContextFor ClientM (BasicAuth "login" Int)
     getPwd = GenBasicAuthData . liftIO $ do
       putStrLn "Authentication needed for this action!"
       putStrLn "(Hint: try 'bob' and 'hunter12')"

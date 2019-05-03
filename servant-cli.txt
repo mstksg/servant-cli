@@ -201,14 +201,7 @@ module Servant.CLI.HasCLI
 --   
 --   Unless you are adding new combinators to be used with APIs, you can
 --   ignore this class.
-class HasCLI m api where {
-    
-    -- | List of extra parameters that must be generated at runtime to produce
-    --   the desired request.
-    --   
-    --   For most routes this will be an empty list, but it is non-empty for
-    --   <a>StreamBody</a>, <a>BasicAuth</a>, and <a>AuthProtect</a>.
-    type family CLIContext (m :: Type -> Type) (api :: Type) :: [Type];
+class HasCLI m api ctx where {
     
     -- | The parsed type of the client request response. Usually this will be a
     --   bunch of nested <a>Either</a>s for every API endpoint, nested
@@ -237,38 +230,54 @@ class HasCLI m api where {
 --   Takes a <a>Rec</a> of actions to generate required items that cannot
 --   be passed via the command line (like authentication). Pass in
 --   <a>RNil</a> if no parameters are expected (that is, if
---   <tt><a>CLIContext</a> m api</tt> is an empty list). The actions will
+--   <tt><tt>CLIContext</tt> m api</tt> is an empty list). The actions will
 --   only be run if they are needed.
-cliPStruct_ :: HasCLI m api => Proxy m -> Proxy api -> Rec m (CLIContext m api) -> PStruct (Request -> m (CLIResult m api))
+cliPStructWithContext_ :: HasCLI m api ctx => Proxy m -> Proxy api -> HList ctx -> PStruct (Request -> m (CLIResult m api))
 
 -- | Handle all the possibilities in a <a>CLIResult</a>, by giving the
 --   appropriate <a>CLIHandler</a>.
-cliHandler :: HasCLI m api => Proxy m -> Proxy api -> CLIHandler m api r -> CLIResult m api -> r
+cliHandler :: HasCLI m api ctx => Proxy m -> Proxy api -> Proxy ctx -> CLIHandler m api r -> CLIResult m api -> r
+newtype GenStreamBody m mods framing ctype a
+GenStreamBody :: m a -> GenStreamBody m mods framing ctype a
+[genStreamBody] :: GenStreamBody m mods framing ctype a -> m a
+newtype GenAuthReq m tag
+GenAuthReq :: m (AuthenticatedRequest (AuthProtect tag)) -> GenAuthReq m tag
+[genAuthReq] :: GenAuthReq m tag -> m (AuthenticatedRequest (AuthProtect tag))
+newtype GenBasicAuthData m realm
+GenBasicAuthData :: m BasicAuthData -> GenBasicAuthData m realm
+[genBasicAuthData] :: GenBasicAuthData m realm -> m BasicAuthData
 
--- | Un-append two <a>Rec</a>s.
-splitRec :: forall as bs g. RecApplicative as => Rec g (as ++ bs) -> (Rec g as, Rec g bs)
-instance Servant.CLI.HasCLI.HasCLI m Servant.API.Empty.EmptyAPI
-instance (Servant.CLI.HasCLI.HasCLI m a, Servant.CLI.HasCLI.HasCLI m b, GHC.Base.Functor m, Data.Vinyl.Core.RecApplicative (Servant.CLI.HasCLI.CLIContext m a)) => Servant.CLI.HasCLI.HasCLI m (a Servant.API.Alternative.:<|> b)
-instance (GHC.TypeLits.KnownSymbol path, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (path Servant.API.Sub.:> api)
-instance (Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToCapture (Servant.API.Capture.Capture sym a), Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Capture.Capture' mods sym a Servant.API.Sub.:> api)
-instance (Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToCapture (Servant.API.Capture.CaptureAll sym a), Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Capture.CaptureAll sym a Servant.API.Sub.:> api)
-instance (GHC.TypeLits.KnownSymbol sym, Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Singletons.Bool.SBoolI (Servant.API.Modifiers.FoldRequired' 'GHC.Types.False mods), Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToParam (Servant.API.QueryParam.QueryParam' mods sym a), Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.QueryParam.QueryParam' mods sym a Servant.API.Sub.:> api)
-instance (GHC.TypeLits.KnownSymbol sym, Servant.Docs.Internal.ToParam (Servant.API.QueryParam.QueryFlag sym), Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.QueryParam.QueryFlag sym Servant.API.Sub.:> api)
-instance (Servant.API.ContentTypes.MimeRender ct a, Servant.CLI.ParseBody.ParseBody a, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.ReqBody.ReqBody' mods (ct : cts) a Servant.API.Sub.:> api)
-instance forall k1 (m :: * -> *) (method :: k1) (status :: GHC.Types.Nat) (cts' :: [*]) a. (Servant.Client.Core.HasClient.HasClient m (Servant.API.Verbs.Verb method status cts' a), Servant.API.Verbs.ReflectMethod method) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Verbs.Verb method status cts' a)
-instance forall k1 (m :: * -> *) ct chunk (method :: k1) framing a (status :: GHC.Types.Nat). (Servant.Client.Core.RunClient.RunStreamingClient m, Servant.API.ContentTypes.MimeUnrender ct chunk, Servant.API.Verbs.ReflectMethod method, Servant.API.Stream.FramingUnrender framing, Servant.API.Stream.FromSourceIO chunk a) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Stream.Stream method status framing ct a)
-instance (Servant.API.Stream.ToSourceIO chunk a, Servant.API.ContentTypes.MimeRender ctype chunk, Servant.API.Stream.FramingRender framing, Servant.CLI.HasCLI.HasCLI m api, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Stream.StreamBody' mods framing ctype a Servant.API.Sub.:> api)
-instance (GHC.TypeLits.KnownSymbol sym, Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Singletons.Bool.SBoolI (Servant.API.Modifiers.FoldRequired' 'GHC.Types.False mods), Data.Typeable.Internal.Typeable a, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Header.Header' mods sym a Servant.API.Sub.:> api)
-instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Network.HTTP.Types.Version.HttpVersion Servant.API.Sub.:> api)
-instance (GHC.TypeLits.KnownSymbol desc, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Description.Summary desc Servant.API.Sub.:> api)
-instance (GHC.TypeLits.KnownSymbol desc, Servant.CLI.HasCLI.HasCLI m api) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Description.Description desc Servant.API.Sub.:> api)
-instance Servant.Client.Core.RunClient.RunClient m => Servant.CLI.HasCLI.HasCLI m Servant.API.Raw.Raw
-instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Data.Vault.Lazy.Vault Servant.API.Sub.:> api)
-instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Servant.API.RemoteHost.RemoteHost Servant.API.Sub.:> api)
-instance Servant.CLI.HasCLI.HasCLI m api => Servant.CLI.HasCLI.HasCLI m (Servant.API.IsSecure.IsSecure Servant.API.Sub.:> api)
-instance Servant.CLI.HasCLI.HasCLI m subapi => Servant.CLI.HasCLI.HasCLI m (Servant.API.WithNamedContext.WithNamedContext name context subapi)
-instance forall k (m :: * -> *) api (tag :: k). (Servant.CLI.HasCLI.HasCLI m api, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Experimental.Auth.AuthProtect tag Servant.API.Sub.:> api)
-instance (Servant.Docs.Internal.ToAuthInfo (Servant.API.BasicAuth.BasicAuth realm usr), Servant.CLI.HasCLI.HasCLI m api, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.BasicAuth.BasicAuth realm usr Servant.API.Sub.:> api)
+-- | Contains a subcontext that can be descended down into using
+--   <a>NamedContext</a>. Mirrors <a>NamedContext</a>.
+--   
+--   Useful for when you have multiple items with the same name within a
+--   context; this essentially creates a namespace for context items.
+newtype NamedContext (name :: Symbol) (subContext :: [Type])
+NamedContext :: HList subContext -> NamedContext
+[getNamedContext] :: NamedContext -> HList subContext
+descendIntoNamedContext :: forall (name :: Symbol) context subContext. NamedContext name subContext ∈ context => Proxy name -> HList context -> HList subContext
+instance (Servant.Docs.Internal.ToAuthInfo (Servant.API.BasicAuth.BasicAuth realm usr), Servant.CLI.HasCLI.HasCLI m api ctx, Servant.CLI.HasCLI.GenBasicAuthData m realm Data.Vinyl.Lens.∈ ctx, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.BasicAuth.BasicAuth realm usr Servant.API.Sub.:> api) ctx
+instance forall k (m :: * -> *) api (ctx :: [*]) (tag :: k). (Servant.CLI.HasCLI.HasCLI m api ctx, Servant.CLI.HasCLI.GenAuthReq m tag Data.Vinyl.Lens.∈ ctx, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Experimental.Auth.AuthProtect tag Servant.API.Sub.:> api) ctx
+instance (Servant.CLI.HasCLI.NamedContext name subctx Data.Vinyl.Lens.∈ ctx, Servant.CLI.HasCLI.HasCLI m subapi subctx) => Servant.CLI.HasCLI.HasCLI m (Servant.API.WithNamedContext.WithNamedContext name subctx subapi) ctx
+instance (Servant.API.Stream.ToSourceIO chunk a, Servant.API.ContentTypes.MimeRender ctype chunk, Servant.API.Stream.FramingRender framing, Servant.CLI.HasCLI.GenStreamBody m mods framing ctype a Data.Vinyl.Lens.∈ ctx, Servant.CLI.HasCLI.HasCLI m api ctx, GHC.Base.Monad m) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Stream.StreamBody' mods framing ctype a Servant.API.Sub.:> api) ctx
+instance Servant.CLI.HasCLI.HasCLI m Servant.API.Empty.EmptyAPI ctx
+instance (Servant.CLI.HasCLI.HasCLI m a ctx, Servant.CLI.HasCLI.HasCLI m b ctx, GHC.Base.Functor m) => Servant.CLI.HasCLI.HasCLI m (a Servant.API.Alternative.:<|> b) ctx
+instance (GHC.TypeLits.KnownSymbol path, Servant.CLI.HasCLI.HasCLI m api ctx) => Servant.CLI.HasCLI.HasCLI m (path Servant.API.Sub.:> api) ctx
+instance (Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToCapture (Servant.API.Capture.Capture sym a), Servant.CLI.HasCLI.HasCLI m api ctx) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Capture.Capture' mods sym a Servant.API.Sub.:> api) ctx
+instance (Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToCapture (Servant.API.Capture.CaptureAll sym a), Servant.CLI.HasCLI.HasCLI m api ctx) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Capture.CaptureAll sym a Servant.API.Sub.:> api) ctx
+instance (GHC.TypeLits.KnownSymbol sym, Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Singletons.Bool.SBoolI (Servant.API.Modifiers.FoldRequired' 'GHC.Types.False mods), Data.Typeable.Internal.Typeable a, Servant.Docs.Internal.ToParam (Servant.API.QueryParam.QueryParam' mods sym a), Servant.CLI.HasCLI.HasCLI m api ctx) => Servant.CLI.HasCLI.HasCLI m (Servant.API.QueryParam.QueryParam' mods sym a Servant.API.Sub.:> api) ctx
+instance (GHC.TypeLits.KnownSymbol sym, Servant.Docs.Internal.ToParam (Servant.API.QueryParam.QueryFlag sym), Servant.CLI.HasCLI.HasCLI m api ctx) => Servant.CLI.HasCLI.HasCLI m (Servant.API.QueryParam.QueryFlag sym Servant.API.Sub.:> api) ctx
+instance (Servant.API.ContentTypes.MimeRender ct a, Servant.CLI.ParseBody.ParseBody a, Servant.CLI.HasCLI.HasCLI m api ctx) => Servant.CLI.HasCLI.HasCLI m (Servant.API.ReqBody.ReqBody' mods (ct : cts) a Servant.API.Sub.:> api) ctx
+instance forall k1 (m :: * -> *) (method :: k1) (status :: GHC.Types.Nat) (cts' :: [*]) a (ctx :: [*]). (Servant.Client.Core.HasClient.HasClient m (Servant.API.Verbs.Verb method status cts' a), Servant.API.Verbs.ReflectMethod method) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Verbs.Verb method status cts' a) ctx
+instance forall k1 (m :: * -> *) ct chunk (method :: k1) framing a (status :: GHC.Types.Nat) (ctx :: [*]). (Servant.Client.Core.RunClient.RunStreamingClient m, Servant.API.ContentTypes.MimeUnrender ct chunk, Servant.API.Verbs.ReflectMethod method, Servant.API.Stream.FramingUnrender framing, Servant.API.Stream.FromSourceIO chunk a) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Stream.Stream method status framing ct a) ctx
+instance (GHC.TypeLits.KnownSymbol sym, Web.Internal.HttpApiData.FromHttpApiData a, Web.Internal.HttpApiData.ToHttpApiData a, Data.Singletons.Bool.SBoolI (Servant.API.Modifiers.FoldRequired' 'GHC.Types.False mods), Data.Typeable.Internal.Typeable a, Servant.CLI.HasCLI.HasCLI m api ctx) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Header.Header' mods sym a Servant.API.Sub.:> api) ctx
+instance Servant.CLI.HasCLI.HasCLI m api ctx => Servant.CLI.HasCLI.HasCLI m (Network.HTTP.Types.Version.HttpVersion Servant.API.Sub.:> api) ctx
+instance (GHC.TypeLits.KnownSymbol desc, Servant.CLI.HasCLI.HasCLI m api ctx) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Description.Summary desc Servant.API.Sub.:> api) ctx
+instance (GHC.TypeLits.KnownSymbol desc, Servant.CLI.HasCLI.HasCLI m api ctx) => Servant.CLI.HasCLI.HasCLI m (Servant.API.Description.Description desc Servant.API.Sub.:> api) ctx
+instance Servant.Client.Core.RunClient.RunClient m => Servant.CLI.HasCLI.HasCLI m Servant.API.Raw.Raw ctx
+instance Servant.CLI.HasCLI.HasCLI m api ctx => Servant.CLI.HasCLI.HasCLI m (Data.Vault.Lazy.Vault Servant.API.Sub.:> api) ctx
+instance Servant.CLI.HasCLI.HasCLI m api ctx => Servant.CLI.HasCLI.HasCLI m (Servant.API.RemoteHost.RemoteHost Servant.API.Sub.:> api) ctx
+instance Servant.CLI.HasCLI.HasCLI m api ctx => Servant.CLI.HasCLI.HasCLI m (Servant.API.IsSecure.IsSecure Servant.API.Sub.:> api) ctx
 
 
 -- | Parse command line arguments into a servant client, from a servant
@@ -292,16 +301,10 @@ module Servant.CLI
 --   tedious handling nested <a>Either</a>s, see <a>parseHandleClient</a>
 --   for a way to handle each potential branch in a convenient way.
 --   
---   Takes a <a>Rec</a> of actions to generate required items that cannot
---   be passed via the command line (like authentication). Pass in
---   <a>RNil</a> if no context is expected (that is, if
---   <tt><a>CLIContext</a> m api</tt> is an empty list), or use
---   <a>parseClient'</a>. The actions will only be run if they are needed.
---   
 --   Takes options on how the top-level prompt is displayed when given
 --   <tt>"--help"</tt>; it can be useful for adding a header or program
 --   description. Otherwise, just use <a>mempty</a>.
-parseClient :: HasCLI m api => Proxy api -> Proxy m -> Rec m (CLIContext m api) -> InfoMod (m (CLIResult m api)) -> IO (m (CLIResult m api))
+parseClient :: HasCLI m api '[] => Proxy api -> Proxy m -> InfoMod (m (CLIResult m api)) -> IO (m (CLIResult m api))
 
 -- | Parse a server client, like <a>parseClient</a>. However, instead of
 --   that client action returning the request response, instead use a
@@ -316,22 +319,22 @@ parseClient :: HasCLI m api => Proxy api -> Proxy m -> Rec m (CLIContext m api) 
 --   Takes a <a>Rec</a> of actions to generate required items that cannot
 --   be passed via the command line (like authentication). Pass in
 --   <a>RNil</a> if no context is expected (that is, if
---   <tt><a>CLIContext</a> m api</tt> is an empty list), or use
---   <a>parseHandleClient'</a>. The actions will only be run if they are
+--   <tt><tt>CLIContext</tt> m api</tt> is an empty list), or use
+--   <tt>parseHandleClient'</tt>. The actions will only be run if they are
 --   needed.
 --   
 --   Takes options on how the top-level prompt is displayed when given
 --   <tt>"--help"</tt>; it can be useful for adding a header or program
 --   description. Otherwise, just use <a>mempty</a>.
-parseHandleClient :: (HasCLI m api, Functor m) => Proxy api -> Proxy m -> Rec m (CLIContext m api) -> InfoMod (m (CLIResult m api)) -> CLIHandler m api r -> IO (m r)
+parseHandleClient :: (HasCLI m api '[], Functor m) => Proxy api -> Proxy m -> InfoMod (m (CLIResult m api)) -> CLIHandler m api r -> IO (m r)
 
--- | A version of <a>parseClient</a> that works when the client action
---   requires no extra context.
-parseClient' :: (HasCLI m api, CLIContext m api ~ '[]) => Proxy api -> Proxy m -> InfoMod (m (CLIResult m api)) -> IO (m (CLIResult m api))
+-- | A version of <a>parseClient</a> that can be used if the API requires
+--   any external context to generate runtime data.
+parseClientWithContext :: HasCLI m api context => Proxy api -> Proxy m -> HList context -> InfoMod (m (CLIResult m api)) -> IO (m (CLIResult m api))
 
--- | A version of <a>parseHandleClient</a> that works when the client
---   action requires no extra context.
-parseHandleClient' :: (HasCLI m api, Functor m, CLIContext m api ~ '[]) => Proxy api -> Proxy m -> InfoMod (m (CLIResult m api)) -> CLIHandler m api r -> IO (m r)
+-- | A version of <a>parseHandleClient</a> that can be used if the API
+--   requires any external context to generate runtime data.
+parseHandleClientWithContext :: forall m api context r. (HasCLI m api context, Functor m) => Proxy api -> Proxy m -> HList context -> InfoMod (m (CLIResult m api)) -> CLIHandler m api r -> IO (m r)
 
 -- | Typeclass defining how each API combinator influences how a server can
 --   be interacted with using command line options.
@@ -342,14 +345,7 @@ parseHandleClient' :: (HasCLI m api, Functor m, CLIContext m api ~ '[]) => Proxy
 --   
 --   Unless you are adding new combinators to be used with APIs, you can
 --   ignore this class.
-class HasCLI m api where {
-    
-    -- | List of extra parameters that must be generated at runtime to produce
-    --   the desired request.
-    --   
-    --   For most routes this will be an empty list, but it is non-empty for
-    --   <a>StreamBody</a>, <a>BasicAuth</a>, and <a>AuthProtect</a>.
-    type family CLIContext (m :: Type -> Type) (api :: Type) :: [Type];
+class HasCLI m api ctx where {
     
     -- | The parsed type of the client request response. Usually this will be a
     --   bunch of nested <a>Either</a>s for every API endpoint, nested
@@ -373,19 +369,33 @@ class HasCLI m api where {
 
 -- | Handle all the possibilities in a <a>CLIResult</a>, by giving the
 --   appropriate <a>CLIHandler</a>.
-cliHandler :: HasCLI m api => Proxy m -> Proxy api -> CLIHandler m api r -> CLIResult m api -> r
+cliHandler :: HasCLI m api ctx => Proxy m -> Proxy api -> Proxy ctx -> CLIHandler m api r -> CLIResult m api -> r
+newtype GenStreamBody m mods framing ctype a
+GenStreamBody :: m a -> GenStreamBody m mods framing ctype a
+[genStreamBody] :: GenStreamBody m mods framing ctype a -> m a
+newtype GenAuthReq m tag
+GenAuthReq :: m (AuthenticatedRequest (AuthProtect tag)) -> GenAuthReq m tag
+[genAuthReq] :: GenAuthReq m tag -> m (AuthenticatedRequest (AuthProtect tag))
+newtype GenBasicAuthData m realm
+GenBasicAuthData :: m BasicAuthData -> GenBasicAuthData m realm
+[genBasicAuthData] :: GenBasicAuthData m realm -> m BasicAuthData
+
+-- | Contains a subcontext that can be descended down into using
+--   <a>NamedContext</a>. Mirrors <a>NamedContext</a>.
+--   
+--   Useful for when you have multiple items with the same name within a
+--   context; this essentially creates a namespace for context items.
+newtype NamedContext (name :: Symbol) (subContext :: [Type])
+NamedContext :: HList subContext -> NamedContext
+[getNamedContext] :: NamedContext -> HList subContext
+descendIntoNamedContext :: forall (name :: Symbol) context subContext. NamedContext name subContext ∈ context => Proxy name -> HList context -> HList subContext
 
 -- | Create a structure for a command line parser.
---   
---   Takes a <a>Rec</a> of actions to generate required items. Pass in
---   <a>RNil</a> if no extra context is expected (that is, if
---   <tt><a>CLIContext</a> m api</tt> is an empty list). The actions will
---   only be run if they are needed.
-cliPStruct :: HasCLI m api => Proxy m -> Proxy api -> Rec m (CLIContext m api) -> PStruct (m (CLIResult m api))
+cliPStruct :: HasCLI m api '[] => Proxy m -> Proxy api -> PStruct (m (CLIResult m api))
 
--- | A version of <a>cliPStruct</a> that works when the client action
---   requires no extra context.
-cliPStruct' :: (HasCLI m api, CLIContext m api ~ '[]) => Proxy m -> Proxy api -> PStruct (m (CLIResult m api))
+-- | A version of <a>cliPStruct</a> that can be used if the API requires
+--   any external context to generate runtime data.
+cliPStructWithContext :: HasCLI m api context => Proxy m -> Proxy api -> HList context -> PStruct (m (CLIResult m api))
 
 -- | Convert a <a>PStruct</a> into a command line argument parser, from the
 --   <i>optparse-applicative</i> library. It can be run with

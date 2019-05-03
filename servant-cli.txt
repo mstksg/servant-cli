@@ -56,7 +56,7 @@ data MultiArg :: Type -> Type
 type Captures = Day Arg PStruct :+: Day MultiArg EndpointMap
 
 -- | Endpoint arguments and body.
-data Endpoint a
+newtype Endpoint a
 Endpoint :: Day (Ap Opt) Parser a -> Endpoint a
 [epStruct] :: Endpoint a -> Day (Ap Opt) Parser a
 
@@ -79,12 +79,12 @@ PStruct :: [String] -> Map String (PStruct a) -> Maybe (Captures a) -> EndpointM
 -- | captures
 [psCaptures] :: PStruct a -> Maybe (Captures a)
 [psEndpoints] :: PStruct a -> EndpointMap a
-data PStructF (a_ag88 :: Type) r_ahbt
-PStructF :: [[Char]] -> Map [Char] r_ahbt -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ag88) -> EndpointMap a_ag88 -> PStructF r_ahbt
-[psInfoF] :: PStructF r_ahbt -> [[Char]]
-[psComponentsF] :: PStructF r_ahbt -> Map [Char] r_ahbt
-[psCapturesF] :: PStructF r_ahbt -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ag88)
-[psEndpointsF] :: PStructF r_ahbt -> EndpointMap a_ag88
+data PStructF (a_ag88 :: Type) r_ahbu
+PStructF :: [[Char]] -> Map [Char] r_ahbu -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ag88) -> EndpointMap a_ag88 -> PStructF r_ahbu
+[psInfoF] :: PStructF r_ahbu -> [[Char]]
+[psComponentsF] :: PStructF r_ahbu -> Map [Char] r_ahbu
+[psCapturesF] :: PStructF r_ahbu -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ag88)
+[psEndpointsF] :: PStructF r_ahbu -> EndpointMap a_ag88
 
 -- | Convert a <a>PStruct</a> into a command line argument parser, from the
 --   <i>optparse-applicative</i> library. It can be run with

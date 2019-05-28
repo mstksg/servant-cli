@@ -54,6 +54,9 @@ library:
   - recursion-schemes
   - servant-client-core >= 0.15
   - servant-docs
+  - functor-combinators
+  - transformers
+  - semigroupoids
 
 executables:
   greet-cli:

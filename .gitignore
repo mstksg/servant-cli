@@ -1,4 +1,5 @@
 .stack-work/
+stack.yaml.lock
 servant-cli.cabal
 example/greet
 example/greet.hi

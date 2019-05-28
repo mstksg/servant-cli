@@ -42,19 +42,19 @@ module Servant.CLI.Internal.PStruct (
   , orRequired, orOptional, orSwitch
   ) where
 
+import           Control.Applicative.Backwards
 import           Control.Applicative.Free
 import           Data.Foldable
 import           Data.Function
 import           Data.Functor
-import           Data.Functor.Coyoneda
-import           Data.Functor.Day
+import           Data.Functor.Bind
+import           Data.Functor.Combinator
 import           Data.Functor.Foldable
 import           Data.Functor.Foldable.TH
 import           Data.Kind
 import           Data.List.NonEmpty              (NonEmpty(..))
 import           Data.Map                        (Map)
 import           Data.Maybe
-import           GHC.Generics
 import           Options.Applicative
 import           System.FilePath
 import qualified Data.Map                        as M
@@ -126,11 +126,6 @@ data PStruct a = PStruct
 
 makeBaseFunctor ''PStruct
 
-(|+|) :: (f a -> r) -> (g a -> r) -> (f :+: g) a -> r
-f |+| g = \case
-    L1 x -> f x
-    R1 y -> g y
-
 -- | Convert a 'PStruct' into a command line argument parser, from the
 -- /optparse-applicative/ library.  It can be run with 'execParser'.
 --
@@ -169,9 +164,14 @@ structParser_ = cata go
           | otherwise            = subparser $ subs
                                             <> metavar "COMPONENT"
                                             <> commandGroup "Path components:"
-        (nsc, cap) = maybe ([], empty) (mkArg p |+| (([],) . mkArgs)) psCapturesF
-        ep         = methodPicker psEndpointsF
-        ns         = psInfoF ++ nsc
+        WrapApplicative cap =
+                interpret
+                    ( inject . mkArg p
+                  !*! inject . mkArgs
+                    )
+                  (MaybeF psCapturesF)
+        ep   = methodPicker psEndpointsF
+        ns   = psInfoF
         mkHelp
           | toHelp    = helper
           | otherwise = pure id
@@ -181,21 +181,20 @@ structParser_ = cata go
         -> (Bool -> [String] -> InfoMod x -> ParserInfo x)
         -> Mod CommandFields x
     mkCmd ps c p = command c (p True (ps ++ [c]) mempty)
-    mkArg :: [String] -> Day Arg PStruct x -> ([String], Parser x)
+    mkArg :: [String] -> Day Arg PStruct x -> Parser x
     mkArg ps (Day a p f) =
-          ( []
-          , f <$> argParser a
-              <*> infoParser (structParser_ p False (ps ++ [':' : argName a]) mempty)
-          )
+          f <$> argParser a
+            <*> infoParser (structParser_ p False (ps ++ [':' : argName a]) mempty)
     mkArgs :: Day MultiArg EndpointMap x -> Parser x
-    mkArgs (Day (MultiArg a) ps f) =
-            flip f <$> methodPicker ps
-                   <*> many (argParser a)
+    mkArgs = retract
+           . ( Backwards . (\case MultiArg a -> many (argParser a))
+           !*! Backwards . methodPicker
+             )
     argParser :: Arg x -> Parser x
     argParser Arg{..} = argument argRead $ help argDesc
                                         <> metavar argMeta
     mkOpt :: Opt x -> Parser x
-    mkOpt Opt{..} = lowerCoyoneda $ (`hoistCoyoneda` optRead) $ \case
+    mkOpt Opt{..} = interpretFor optRead $ \case
         ORRequired r -> option r mods
         OROptional r -> optional $ option r mods
         ORSwitch     -> switch   $ long optName <> help optDesc
@@ -217,7 +216,7 @@ structParser_ = cata go
       where
         epMap = mkEndpoint <$> eps
     mkEndpoint :: Endpoint x -> Parser x
-    mkEndpoint = dap . trans1 (runAp mkOpt) . epStruct
+    mkEndpoint = interpretT (interpret mkOpt) id . epStruct
     pickMethod :: HTTP.Method -> Parser x -> Mod CommandFields x
     pickMethod m p = command (T.unpack . T.decodeUtf8 $ m) $ info (p <**> helper) mempty
     mkRaw :: Endpoint (HTTP.Method -> x) -> Parser x
@@ -298,7 +297,7 @@ infixr 4 ?:>
 
 addEndpointOpt :: Opt a -> Endpoint (a -> b) -> Endpoint b
 addEndpointOpt o (Endpoint (Day eo eb ef)) =
-    Endpoint (Day ((,) <$> liftAp o <*> eo) eb $ \(x, y) z -> ef y z x)
+    Endpoint (Day ((,) <$> inject o <*> eo) eb $ \(x, y) z -> ef y z x)
 
 addEPMOpt :: Opt a -> EndpointMap (a -> b) -> EndpointMap b
 addEPMOpt o (EPM e r) = EPM e' r'
@@ -343,8 +342,8 @@ b %:> PStruct ns cs c ep = PStruct ns cs' c' ep'
 infixr 4 %:>
 
 addEndpointBody :: Parser a -> Endpoint (a -> b) -> Endpoint b
-addEndpointBody b (Endpoint (Day eo eb ef)) =
-    Endpoint (Day eo (liftA2 (,) b eb) $ \x (y, z) -> ef x z y)
+addEndpointBody b (Endpoint d) =
+    Endpoint (inR b <**> d)
 
 addEPMBody :: Parser a -> EndpointMap (a -> b) -> EndpointMap b
 addEPMBody b (EPM e r) = EPM e' r'
@@ -366,14 +365,14 @@ rawEndpoint f = mempty
 
 -- | Helper to lift a 'ReadM' into something that can be used with 'optRead'.
 orRequired :: ReadM a -> Coyoneda OptRead a
-orRequired = liftCoyoneda . ORRequired
+orRequired = inject . ORRequired
 
 -- | Helper to lift an optional 'ReadM' into something that can be used
 -- with 'optRead'.
 orOptional :: ReadM a -> Coyoneda OptRead (Maybe a)
-orOptional = liftCoyoneda . OROptional
+orOptional = inject . OROptional
 
 -- | An 'optRead' that is on-or-off.
 orSwitch :: Coyoneda OptRead Bool
-orSwitch = liftCoyoneda ORSwitch
+orSwitch = inject ORSwitch
 

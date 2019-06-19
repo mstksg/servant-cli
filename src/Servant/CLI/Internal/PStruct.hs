@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveFunctor     #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE KindSignatures    #-}
 {-# LANGUAGE LambdaCase        #-}
@@ -47,14 +48,15 @@ import           Control.Applicative.Free
 import           Data.Foldable
 import           Data.Function
 import           Data.Functor
-import           Data.Functor.Bind
 import           Data.Functor.Combinator
+import           Data.Functor.Combinator.Unsafe
 import           Data.Functor.Foldable
 import           Data.Functor.Foldable.TH
 import           Data.Kind
 import           Data.List.NonEmpty              (NonEmpty(..))
 import           Data.Map                        (Map)
 import           Data.Maybe
+import           Data.Proxy
 import           Options.Applicative
 import           System.FilePath
 import qualified Data.Map                        as M
@@ -164,12 +166,8 @@ structParser_ = cata go
           | otherwise            = subparser $ subs
                                             <> metavar "COMPONENT"
                                             <> commandGroup "Path components:"
-        WrapApplicative cap =
-                interpret
-                    ( inject . mkArg p
-                  !*! inject . mkArgs
-                    )
-                  (MaybeF psCapturesF)
+        cap  = unsafePlus (Proxy @Parser) $
+                  interpret (mkArg p !*! mkArgs) $ MaybeF psCapturesF
         ep   = methodPicker psEndpointsF
         ns   = psInfoF
         mkHelp
@@ -186,15 +184,16 @@ structParser_ = cata go
           f <$> argParser a
             <*> infoParser (structParser_ p False (ps ++ [':' : argName a]) mempty)
     mkArgs :: Day MultiArg EndpointMap x -> Parser x
-    mkArgs = retract
-           . ( Backwards . (\case MultiArg a -> many (argParser a))
-           !*! Backwards . methodPicker
-             )
+    mkArgs = upgradeC @Day (Proxy @Parser) $
+           forwards
+         . ( Backwards . (\case MultiArg a -> many (argParser a))
+         !*! Backwards . methodPicker
+           )
     argParser :: Arg x -> Parser x
     argParser Arg{..} = argument argRead $ help argDesc
                                         <> metavar argMeta
     mkOpt :: Opt x -> Parser x
-    mkOpt Opt{..} = interpretFor optRead $ \case
+    mkOpt Opt{..} = forI optRead $ \case
         ORRequired r -> option r mods
         OROptional r -> optional $ option r mods
         ORSwitch     -> switch   $ long optName <> help optDesc
@@ -216,7 +215,9 @@ structParser_ = cata go
       where
         epMap = mkEndpoint <$> eps
     mkEndpoint :: Endpoint x -> Parser x
-    mkEndpoint = interpretT (interpret mkOpt) id . epStruct
+    mkEndpoint = upgradeC @Day (Proxy @Parser) $
+        binterpret (interpret mkOpt) id
+      . epStruct
     pickMethod :: HTTP.Method -> Parser x -> Mod CommandFields x
     pickMethod m p = command (T.unpack . T.decodeUtf8 $ m) $ info (p <**> helper) mempty
     mkRaw :: Endpoint (HTTP.Method -> x) -> Parser x

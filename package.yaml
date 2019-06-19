@@ -1,5 +1,5 @@
 name:                servant-cli
-version:             0.1.0.0
+version:             0.1.0.1
 github:              "mstksg/servant-cli"
 license:             BSD3
 author:              "Justin Le"
@@ -49,14 +49,12 @@ library:
   - filepath
   - free
   - http-types
-  - kan-extensions
   - profunctors
   - recursion-schemes
   - servant-client-core >= 0.15
   - servant-docs
   - functor-combinators
   - transformers
-  - semigroupoids
 
 executables:
   greet-cli:

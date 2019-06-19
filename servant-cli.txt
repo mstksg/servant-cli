@@ -14,7 +14,7 @@
 --   See <tt>example/greet.hs</tt> for an example usage, and the
 --   <a>README</a> for a tutorial.
 @package servant-cli
-@version 0.1.0.0
+@version 0.1.0.1
 
 
 -- | Internal module providing a data structure for representing structure
@@ -79,12 +79,12 @@ PStruct :: [String] -> Map String (PStruct a) -> Maybe (Captures a) -> EndpointM
 -- | captures
 [psCaptures] :: PStruct a -> Maybe (Captures a)
 [psEndpoints] :: PStruct a -> EndpointMap a
-data PStructF (a_ag88 :: Type) r_ahbu
-PStructF :: [[Char]] -> Map [Char] r_ahbu -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ag88) -> EndpointMap a_ag88 -> PStructF r_ahbu
-[psInfoF] :: PStructF r_ahbu -> [[Char]]
-[psComponentsF] :: PStructF r_ahbu -> Map [Char] r_ahbu
-[psCapturesF] :: PStructF r_ahbu -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ag88)
-[psEndpointsF] :: PStructF r_ahbu -> EndpointMap a_ag88
+data PStructF (a_ak3Z :: Type) r_akSl
+PStructF :: [[Char]] -> Map [Char] r_akSl -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ak3Z) -> EndpointMap a_ak3Z -> PStructF r_akSl
+[psInfoF] :: PStructF r_akSl -> [[Char]]
+[psComponentsF] :: PStructF r_akSl -> Map [Char] r_akSl
+[psCapturesF] :: PStructF r_akSl -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ak3Z)
+[psEndpointsF] :: PStructF r_akSl -> EndpointMap a_ak3Z
 
 -- | Convert a <a>PStruct</a> into a command line argument parser, from the
 --   <i>optparse-applicative</i> library. It can be run with

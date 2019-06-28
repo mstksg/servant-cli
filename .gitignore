@@ -4,4 +4,6 @@ servant-cli.cabal
 example/greet
 example/greet.hi
 example/greet.o
+dist-newstyle
+.ghc.environment*
 *~

@@ -109,6 +109,13 @@ server = serveWithContext testApi (authCheck :. EmptyContext) $
           | p == p'   -> Authorized <$> randomIO @Int
           | otherwise -> pure BadPassword
 
+-- | Safely shutdown the server when we're done
+withServer :: IO () -> IO ()
+withServer action =
+  bracket (forkIO $ run 8081 server)
+    killThread
+    (const action)
+
 main :: IO ()
 main = do
     c <- parseHandleClientWithContext
@@ -122,14 +129,14 @@ main = do
             )
        :<|> (\s -> "Reversed: " ++ T.unpack s)
 
-    _ <- forkIO $ run 8081 server
+    withServer $ do
 
-    manager' <- newManager defaultManagerSettings
-    res      <- runClientM c (mkClientEnv manager' (BaseUrl Http "localhost" 8081 ""))
+        manager' <- newManager defaultManagerSettings
+        res      <- runClientM c (mkClientEnv manager' (BaseUrl Http "localhost" 8081 ""))
 
-    case res of
-      Left e        -> throwIO e
-      Right rstring -> putStrLn rstring
+        case res of
+          Left e        -> throwIO e
+          Right rstring -> putStrLn rstring
   where
     cinfo = header "greet" <> progDesc "Greet API"
     getPwd :: ContextFor ClientM (BasicAuth "login" Int)

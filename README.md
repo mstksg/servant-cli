@@ -47,6 +47,7 @@ we can run:
 
 ```haskell
 main :: IO ()
+main = do
     c <- parseClient testApi (Proxy :: Proxy ClientM) $
             header "greet"
          <> progDesc "Greet API"

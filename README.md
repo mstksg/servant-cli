@@ -79,6 +79,7 @@ handlers for each endpoint, mirroring the structure of the API:
 
 ```haskell
 main :: IO ()
+main = do
     c <- parseHandleClient testApi (Proxy :: Proxy ClientM)
       (header "greet" <> progDesc "Greet API") $
                 (\g -> "Greeting: " ++ T.unpack g)
@@ -135,6 +136,7 @@ For this, you can pass in a context, using `parseClientWithContext` or
 
 ```haskell
 main :: IO ()
+main = do
     c <- parseHandleClientWithContext
       testApi
       (Proxy :: Proxy ClientM)

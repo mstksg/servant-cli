@@ -39,10 +39,8 @@ packages:
 # using the same syntax as the packages field.
 # (e.g., acme-missiles-0.3)
 extra-deps:
-- functor-combinators-0.1.0.1
-# - github: mstksg/functor-combinators
-#   commit: e2349cdf1de90c7efedf5f7717a13fbb068f3602
-- trivial-constraint-0.5.1.0
+- functor-combinators-0.2.0.0
+- trivial-constraint-0.6.0.0
 
 # Override default flag values for local packages and extra-deps
 # flags: {}

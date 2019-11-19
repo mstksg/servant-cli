@@ -184,7 +184,7 @@ structParser_ = cata go
           f <$> argParser a
             <*> infoParser (structParser_ p False (ps ++ [':' : argName a]) mempty)
     mkArgs :: Day MultiArg EndpointMap x -> Parser x
-    mkArgs = upgradeC @Day (Proxy @Parser) $
+    mkArgs = unsafeApply (Proxy @Parser) $
            forwards
          . ( Backwards . (\case MultiArg a -> many (argParser a))
          !*! Backwards . methodPicker
@@ -215,7 +215,7 @@ structParser_ = cata go
       where
         epMap = mkEndpoint <$> eps
     mkEndpoint :: Endpoint x -> Parser x
-    mkEndpoint = upgradeC @Day (Proxy @Parser) $
+    mkEndpoint = unsafeApply (Proxy @Parser) $
         binterpret (interpret mkOpt) id
       . epStruct
     pickMethod :: HTTP.Method -> Parser x -> Mod CommandFields x

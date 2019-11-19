@@ -79,12 +79,12 @@ PStruct :: [String] -> Map String (PStruct a) -> Maybe (Captures a) -> EndpointM
 -- | captures
 [psCaptures] :: PStruct a -> Maybe (Captures a)
 [psEndpoints] :: PStruct a -> EndpointMap a
-data PStructF (a_ak3Z :: Type) r_akSl
-PStructF :: [[Char]] -> Map [Char] r_akSl -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ak3Z) -> EndpointMap a_ak3Z -> PStructF r_akSl
-[psInfoF] :: PStructF r_akSl -> [[Char]]
-[psComponentsF] :: PStructF r_akSl -> Map [Char] r_akSl
-[psCapturesF] :: PStructF r_akSl -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ak3Z)
-[psEndpointsF] :: PStructF r_akSl -> EndpointMap a_ak3Z
+data PStructF (a_ak4U :: Type) r_akTg
+PStructF :: [[Char]] -> Map [Char] r_akTg -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ak4U) -> EndpointMap a_ak4U -> PStructF r_akTg
+[psInfoF] :: PStructF r_akTg -> [[Char]]
+[psComponentsF] :: PStructF r_akTg -> Map [Char] r_akTg
+[psCapturesF] :: PStructF r_akTg -> Maybe ((:+:) (Day Arg PStruct) (Day MultiArg EndpointMap) a_ak4U)
+[psEndpointsF] :: PStructF r_akTg -> EndpointMap a_ak4U
 
 -- | Convert a <a>PStruct</a> into a command line argument parser, from the
 --   <i>optparse-applicative</i> library. It can be run with

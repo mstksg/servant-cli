@@ -248,7 +248,7 @@ instance ( KnownSymbol sym
         addParam :: RequiredArgument mods a -> Request -> Request
         addParam = foldRequiredArgument (Proxy @mods) add (maybe id add)
         add :: a -> Request -> Request
-        add param = appendToQueryString (T.pack pName) (Just (toQueryParam param))
+        add param = appendToQueryString (T.pack pName) (Just $ T.encodeUtf8 $ toQueryParam param)
         opt :: Opt (RequiredArgument mods a)
         opt = Opt
           { optName = pName

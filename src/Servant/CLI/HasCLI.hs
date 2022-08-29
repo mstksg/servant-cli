@@ -41,7 +41,7 @@ import           Data.Bifunctor
 import           Data.Char
 import           Data.Function
 import           Data.Kind
-import           Data.List
+import           Data.List                    (foldl', intercalate)
 import           Data.Profunctor
 import           Data.Proxy
 import           Data.Vinyl hiding            (rmap)

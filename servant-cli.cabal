@@ -1,0 +1,91 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.34.6.
+--
+-- see: https://github.com/sol/hpack
+
+name:           servant-cli
+version:        0.1.0.2
+synopsis:       Command line interface for Servant API clients
+description:    Parse command line arguments into a servant client, from a servant API,
+                using /optparse-applicative/ for parsing, displaying help, and
+                auto-completion.
+                .
+                Hooks into the annotation system used by /servant-docs/ to provide descriptions
+                for parameters and captures.
+                .
+                See @example/greet.hs@ for an example usage, and the
+                <https://hackage.haskell.org/package/servant-cli README> for a tutorial.
+category:       Web
+homepage:       https://github.com/mstksg/servant-cli#readme
+bug-reports:    https://github.com/mstksg/servant-cli/issues
+author:         Justin Le
+maintainer:     justin@jle.im
+copyright:      (c) Justin Le 2019
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+tested-with:
+    GHC >= 8.6
+extra-source-files:
+    README.md
+    CHANGELOG.md
+
+source-repository head
+  type: git
+  location: https://github.com/mstksg/servant-cli
+
+library
+  exposed-modules:
+      Servant.CLI
+      Servant.CLI.HasCLI
+      Servant.CLI.Internal.PStruct
+      Servant.CLI.ParseBody
+  other-modules:
+      Paths_servant_cli
+  hs-source-dirs:
+      src
+  ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wredundant-constraints -Werror=incomplete-patterns
+  build-depends:
+      base >=4.12 && <5
+    , bytestring
+    , case-insensitive
+    , containers
+    , filepath
+    , free
+    , functor-combinators >=0.2
+    , http-types
+    , optparse-applicative
+    , profunctors
+    , recursion-schemes
+    , servant >=0.15
+    , servant-client-core >=0.15
+    , servant-docs
+    , text
+    , transformers
+    , vinyl
+  default-language: Haskell2010
+
+executable greet-cli
+  main-is: greet.hs
+  other-modules:
+      Paths_servant_cli
+  hs-source-dirs:
+      example
+  ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wredundant-constraints -Werror=incomplete-patterns
+  build-depends:
+      aeson
+    , base >=4.12 && <5
+    , bytestring
+    , containers
+    , http-client
+    , optparse-applicative
+    , random
+    , servant >=0.15
+    , servant-cli
+    , servant-client
+    , servant-server
+    , text
+    , vinyl
+    , warp
+  default-language: Haskell2010

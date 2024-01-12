@@ -57,6 +57,7 @@ import           Servant.Docs.Internal hiding (Endpoint, Response)
 import           Text.Printf
 import           Type.Reflection
 import qualified Data.ByteString.Lazy         as BSL
+import qualified Data.ByteString.Builder      as BSB
 import qualified Data.CaseInsensitive         as CI
 import qualified Data.List.NonEmpty           as NE
 import qualified Data.Text                    as T
@@ -162,7 +163,9 @@ instance (KnownSymbol path, HasCLI m api ctx) => HasCLI m (path :> api) ctx wher
     type CLIHandler m (path :> api) r = CLIHandler m api r
 
     cliPStructWithContext_ pm _ p = pathstr $:>
-        (fmap . lmap) (appendToPath (T.pack pathstr)) (cliPStructWithContext_ pm (Proxy @api) p)
+        (fmap . lmap)
+          (appendToPath (BSB.byteString $ T.encodeUtf8 $ T.pack pathstr))
+          (cliPStructWithContext_ pm (Proxy @api) p)
       where
         pathstr = symbolVal (Proxy @path)
 
@@ -184,7 +187,7 @@ instance ( FromHttpApiData a
     cliPStructWithContext_ pm _ p = arg #:>
         fmap (.: addCapture) (cliPStructWithContext_ pm (Proxy @api) p)
       where
-        addCapture = appendToPath . toUrlPiece
+        addCapture = appendToPath . BSB.byteString . T.encodeUtf8 . toUrlPiece
         arg = Arg
           { argName = _capSymbol
           , argDesc = printf "%s (%s)" _capDesc capType
@@ -211,7 +214,10 @@ instance ( FromHttpApiData a
     cliPStructWithContext_ pm _ p = arg ##:>
         fmap (.: addCapture) (cliPStructWithContext_ pm (Proxy @api) p)
       where
-        addCapture ps req = foldl' (flip appendToPath) req (map toUrlPiece ps)
+        addCapture ps req = foldl'
+          (flip appendToPath)
+          req
+          (map (BSB.byteString . T.encodeUtf8 . toUrlPiece) ps)
         arg = Arg
           { argName = _capSymbol
           , argDesc = printf "%s (%s)" _capDesc capType
@@ -248,7 +254,9 @@ instance ( KnownSymbol sym
         addParam :: RequiredArgument mods a -> Request -> Request
         addParam = foldRequiredArgument (Proxy @mods) add (maybe id add)
         add :: a -> Request -> Request
-        add param = appendToQueryString (T.pack pName) (Just (toQueryParam param))
+        add param = appendToQueryString
+              (T.pack pName)
+              (Just (T.encodeUtf8 $ toQueryParam param))
         opt :: Opt (RequiredArgument mods a)
         opt = Opt
           { optName = pName

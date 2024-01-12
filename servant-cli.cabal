@@ -55,11 +55,11 @@ library
     , free
     , functor-combinators >=0.2
     , http-types
-    , optparse-applicative < 0.18
+    , optparse-applicative
     , profunctors
     , recursion-schemes
     , servant >=0.15
-    , servant-client-core >=0.15 && <0.19
+    , servant-client-core >= 0.20
     , servant-docs
     , text
     , transformers

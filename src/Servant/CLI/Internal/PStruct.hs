@@ -157,7 +157,7 @@ structParser_ = cata go
     go PStructF{..} toHelp p im = info ((subp <|> cap <|> ep) <**> mkHelp) $
            fullDesc
         <> header (joinPath p)
-        <> progDescDoc (Just (O.vcat . map O.string $ ns))
+        <> progDescDoc (Just (O.vcat . map O.pretty $ ns))
         <> im
       where
         subs = M.foldMapWithKey (mkCmd p) psComponentsF

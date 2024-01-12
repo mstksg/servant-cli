@@ -1,6 +1,6 @@
-{-# LANGUAGE DefaultSignatures   #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- |
 -- Module      : Servant.CLI.ParseBody
@@ -13,17 +13,18 @@
 --
 -- Provides the interface for 'ParseBody', a helper class for defining
 -- directly how to parse request bodies.
-module Servant.CLI.ParseBody (
-    ParseBody(..)
-  , defaultParseBody
-  ) where
+module Servant.CLI.ParseBody
+  ( ParseBody (..),
+    defaultParseBody,
+  )
+where
 
-import           Data.Char
-import           Options.Applicative
-import           Text.Printf
-import           Type.Reflection
-import qualified Data.Text           as T
-import qualified Data.Text.Lazy      as TL
+import Data.Char
+import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
+import Options.Applicative
+import Text.Printf
+import Type.Reflection
 
 -- | A helper class for defining directly how to parse request bodies.
 -- This allows more complex parsing of bodies.
@@ -31,30 +32,36 @@ import qualified Data.Text.Lazy      as TL
 -- You need an instance of this for every type you use with
 -- 'Servant.API.ReqBody'.
 class ParseBody a where
-    parseBody :: Parser a
-
-    default parseBody :: (Typeable a, Read a) => Parser a
-    parseBody = defaultParseBody (show (typeRep @a)) auto
+  parseBody :: Parser a
+  default parseBody :: (Typeable a, Read a) => Parser a
+  parseBody = defaultParseBody (show (typeRep @a)) auto
 
 -- | Default implementation that expects a @--data@ option.
-defaultParseBody
-    :: String       -- ^ type specification
-    -> ReadM a      -- ^ parser
-    -> Parser a
-defaultParseBody mv r = option r
+defaultParseBody ::
+  -- | type specification
+  String ->
+  -- | parser
+  ReadM a ->
+  Parser a
+defaultParseBody mv r =
+  option
+    r
     ( metavar (printf "<%s>" (map toLower mv))
-   <> long "data"
-   <> short 'd'
-   <> help (printf "Request body (%s)" mv)
+        <> long "data"
+        <> short 'd'
+        <> help (printf "Request body (%s)" mv)
     )
 
 instance ParseBody T.Text where
-    parseBody = defaultParseBody "Text" str
+  parseBody = defaultParseBody "Text" str
 
 instance ParseBody TL.Text where
-    parseBody = defaultParseBody "Text" str
+  parseBody = defaultParseBody "Text" str
 
-instance ParseBody Int where
-instance ParseBody Integer where
-instance ParseBody Float where
-instance ParseBody Double where
+instance ParseBody Int
+
+instance ParseBody Integer
+
+instance ParseBody Float
+
+instance ParseBody Double

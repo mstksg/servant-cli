@@ -1,6 +1,17 @@
 Changelog
 =========
 
+Version 0.1.0.3
+---------------
+
+*January 12, 2024*
+
+<https://github.com/mstksg/servant-cli/releases/tag/v0.1.0.3>
+
+*   Move to servant-client-core >= 0.20, breaks compatibility with previous
+    versions.
+*   Compatibility with opt-parse applicative >= 0.18
+
 Version 0.1.0.2
 ---------------
 

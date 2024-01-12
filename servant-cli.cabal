@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           servant-cli
-version:        0.1.0.2
+version:        0.1.0.3
 synopsis:       Command line interface for Servant API clients
 description:    Parse command line arguments into a servant client, from a servant API,
                 using /optparse-applicative/ for parsing, displaying help, and

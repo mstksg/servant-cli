@@ -1,6 +1,15 @@
 Changelog
 =========
 
+Version 0.1.1.0
+---------------
+
+*January 12, 2024*
+
+<https://github.com/mstksg/servant-cli/releases/tag/v0.1.1.0>
+
+*   Support for `QueryParams` and `NoContentVerb`
+
 Version 0.1.0.3
 ---------------
 

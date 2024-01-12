@@ -338,6 +338,58 @@ instance
 
   cliHandler pm _ = cliHandler pm (Proxy @api)
 
+-- | Query parameters are interpreted as command line options, and so repeated
+-- query parameters are repeated command line options.
+--
+-- 'QueryParams' are associated with the action at their endpoint.  After
+-- entering all path components and positional arguments, the parser library
+-- will begin asking for arguments.
+--
+-- Note that these require 'ToParam' instances from /servant-docs/, to
+-- provide appropriate help messages.
+instance
+  ( ToHttpApiData a,
+    ToParam (QueryParams sym a),
+    KnownSymbol sym,
+    Typeable a,
+    FromHttpApiData a,
+    HasCLI m api ctx
+  ) =>
+  HasCLI m (QueryParams sym a :> api) ctx
+  where
+  type CLIResult m (QueryParams sym a :> api) = CLIResult m api
+  type CLIHandler m (QueryParams sym a :> api) r = CLIHandler m api r
+
+  cliPStructWithContext_ pm _ p =
+    opt
+      ?:> fmap (.: addParam) (cliPStructWithContext_ pm (Proxy @api) p)
+    where
+      addParam :: [a] -> Request -> Request
+      addParam ps req = foldl' (flip add) req ps
+      add :: a -> Request -> Request
+      add param =
+        appendToQueryString
+          (T.pack pName)
+          (Just (T.encodeUtf8 $ toQueryParam param))
+      opt :: Opt [a]
+      opt =
+        Opt
+          { optName = pName,
+            optDesc = printf "%s (%s)" _paramDesc valSpec,
+            optMeta = map toUpper pType,
+            optVals = NE.nonEmpty _paramValues,
+            optRead = orMany r
+          }
+      r = eitherReader $ first T.unpack . parseQueryParam @a . T.pack
+      pType = show $ typeRep @a
+      valSpec
+        | null _paramValues = pType
+        | otherwise = "options: " ++ intercalate ", " _paramValues
+      pName = symbolVal (Proxy @sym)
+      DocQueryParam {..} = toParam (Proxy @(QueryParams sym a))
+
+  cliHandler pm _ = cliHandler pm (Proxy @api)
+
 -- | Request body requirements are interpreted using 'ParseBody'.
 --
 -- Note if more than one 'ReqBody' is in an API endpoint, both parsers will

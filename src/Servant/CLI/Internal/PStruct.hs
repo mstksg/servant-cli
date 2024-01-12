@@ -52,6 +52,7 @@ module Servant.CLI.Internal.PStruct
     orRequired,
     orOptional,
     orSwitch,
+    orMany,
   )
 where
 
@@ -82,6 +83,7 @@ data OptRead :: Type -> Type where
   ORRequired :: ReadM a -> OptRead a
   OROptional :: ReadM a -> OptRead (Maybe a)
   ORSwitch :: OptRead Bool
+  ORMany :: ReadM a -> OptRead [a]
 
 -- | Query parameters are interpreted as options
 data Opt a = Opt
@@ -227,6 +229,7 @@ structParser_ = cata go
       ORRequired r -> option r mods
       OROptional r -> optional $ option r mods
       ORSwitch -> switch $ long optName <> help optDesc
+      ORMany r -> many $ option r mods
       where
         mods :: Mod OptionFields y
         mods =
@@ -422,3 +425,7 @@ orOptional = inject . OROptional
 -- | An 'optRead' that is on-or-off.
 orSwitch :: Coyoneda OptRead Bool
 orSwitch = inject ORSwitch
+
+-- | An 'optRead' that is on-or-off.
+orMany :: ReadM a -> Coyoneda OptRead [a]
+orMany = inject . ORMany

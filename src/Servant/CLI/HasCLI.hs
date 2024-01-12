@@ -438,6 +438,29 @@ instance
   cliPStructWithContext_ pm pa _ = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
   cliHandler _ _ _ = ($)
 
+-- | Final actions are the result of specifying all necessary command line
+-- positional arguments.
+--
+-- All command line options are associated with the final action at the end
+-- of their endpoint/path.  They cannot be entered in "before" you arrive
+-- at your final endpoint.
+--
+-- If more than one action (under a different method) exists
+-- under the same endpoint/path, the method (@GET@, @POST@, etc.) will be
+-- treated as an extra final command.  After that, you may begin entering
+-- in options.
+instance
+  ( RunClient m,
+    ReflectMethod method
+  ) =>
+  HasCLI m (NoContentVerb method) ctx
+  where
+  type CLIResult m (NoContentVerb method) = NoContent
+  type CLIHandler m (NoContentVerb method) r = r
+
+  cliPStructWithContext_ pm pa _ = endpoint (reflectMethod (Proxy @method)) (clientWithRoute pm pa)
+  cliHandler _ _ _ = const
+
 -- | Same semantics in parsing command line options as 'Verb'.
 instance
   ( RunStreamingClient m,
